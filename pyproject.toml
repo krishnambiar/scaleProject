@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trackpad-scale-phase1"
+version = "0.1.0"
+description = "Clean-room Phase 1 MacBook trackpad frame-metadata probe"
+requires-python = ">=3.9"
+
+[project.scripts]
+trackpad-phase1 = "trackpad_scale.phase1_probe:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+trackpad_scale = ["abi_profiles/*.json"]
+

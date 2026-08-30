@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "scope": "Phase 1 machine-ABI evidence only; no touch-record layout is defined",
+  "target": {
+    "architecture": "arm64",
+    "os_build": "25D771280a",
+    "hardware_model": "Mac16,8",
+    "framework_bundle_version": "9430.5",
+    "framework_image_uuid": "40D691BB-9166-31E0-959E-351863FF09A0"
+  },
+  "locally_observed_callback_register_mapping": {
+    "x0": "device pointer",
+    "x1": "opaque touch-record pointer (never dereferenced in Phase 1)",
+    "x2": "raw touch-count register",
+    "d0": "double-precision device timestamp",
+    "x3": "raw frame-number register",
+    "x4": "registration refcon"
+  },
+  "explicit_unknowns": [
+    "Apple source typedef for the touch-count argument",
+    "Apple source typedef and width contract for the frame-number argument",
+    "touch-record struct size, alignment, fields, and offsets",
+    "pressure-related field locations and native types",
+    "semantics of MTDeviceStart option bits other than zero"
+  ],
+  "runtime_evidence": {
+    "start_options_zero": "returned success in 25 consecutive ASan/UBSan start/stop/destroy cycles",
+    "callback_pointer_interoperability": "verified by thousands of live callbacks",
+    "idle_behavior": "continuous idle frames are suppressed; releases produced terminal count-zero callbacks"
+  },
+  "evidence_method": "Local dyld shared-cache export inspection, arm64 disassembly, and target-Mac runtime diagnostics only; no third-party project source"
+}

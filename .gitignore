@@ -1,0 +1,7 @@
+build/
+artifacts/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tmp/
+.DS_Store
