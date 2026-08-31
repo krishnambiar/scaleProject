@@ -9,12 +9,16 @@ Target fingerprint at inspection time:
 - hardware model: `Mac16,8`
 - architecture: `arm64`
 - macOS: `26.3.1 (a)`, build `25D771280a`
-- Darwin: `25.3.0`
+- kernel/base-system build: `25D2128` (Darwin `25.3.0`)
 - MultitouchSupport bundle version: `9430.5`
 - dyld image architecture: `arm64e`
 - dyld image UUID: `40D691BB-9166-31E0-959E-351863FF09A0`
 
-The executable is resident in the dyld shared cache even though the framework's filesystem executable symlink has no standalone target. `dlopen` by the framework path succeeded on this Mac.
+The product and kernel build values differ because the active Rapid Security
+Response cryptex reports `25D771280a` while `kern.osversion` reports the base
+`25D2128`. Both are recorded and checked. The framework executable is resident
+in the dyld shared cache even though its filesystem executable symlink has no
+standalone target. `dlopen` by the framework path succeeded on this Mac.
 
 ## What local arm64 disassembly established
 
@@ -47,7 +51,12 @@ The dispatch dataflow also shows that active contact counts are bounded at 32 an
 - The acquired default device reported built-in and Force Touch capability.
 - Callback registration and `MTDeviceStart(device, 0)` succeeded; `MTDeviceStop` and unregistration completed cleanly.
 - The application-thread stop path was locally verified to serialize through the callback run loop before unregister and release.
-- Twenty-five consecutive start/stop/destroy cycles returned native status zero and passed AddressSanitizer/UndefinedBehaviorSanitizer. Deterministic sanitizer tests also paused a callback before admission while destroying the capture, and after admission while destruction waited; both lifetime races completed without invalid access.
+- Twenty-five Phase 1 and ten opt-in Phase 2 consecutive start/stop cycles
+  returned native status zero and passed
+  AddressSanitizer/UndefinedBehaviorSanitizer. Deterministic sanitizer tests
+  also paused callbacks before and after admission while destroying captures
+  with Phase 2 state allocated; both lifetime races completed without invalid
+  access.
 - A 3-second preflight delivered 352 callbacks with no bridge drops, device mismatches, duplicate/regressing frame steps, or timestamp regressions.
 - A longer guided run delivered 3,372 callbacks with zero native queue loss and observed count values 0, 1, and 2. Every one of the 2,056 stage-recorded frames had forward-only frame IDs and timestamps; the earlier diagnostic version intentionally drained transition frames without retaining them. The labelled two-finger interval was physically mixed, so its exact histogram remains evidence rather than a perfect-contact claim. The current diagnostic retains and analyzes transition frames too.
 
@@ -56,7 +65,12 @@ The dispatch dataflow also shows that active contact counts are bounded at 32 an
 - Apple's source typedef for the count argument.
 - Apple's source typedef and promised width for the frame argument.
 - Callback rate and frame-ID continuity under 0/1/multiple physical contacts.
-- Every touch-record layout detail, including size, alignment, fields, offsets, and pressure data.
+- Every unselected touch-record byte and all Apple private source typedef names.
+- The physical behavior, unit, drift, and geometry sensitivity of the Phase 2
+  pressure candidate. The selected exact-target byte layout is documented in
+  [PHASE2_ABI_VERIFICATION.md](PHASE2_ABI_VERIFICATION.md).
 - Every `MTDeviceStart` option bit other than zero.
 
-The guided diagnostic exists to verify the metadata behavior without touching any record bytes. Phase 2 must not begin until its output demonstrates reliable physical 0/1/multiple-contact behavior on this target.
+The Phase 1 diagnostic continues to verify metadata without touching record
+bytes. Phase 2 is an additive, explicitly enabled path with a separate target
+profile and queue; it does not change this Phase 1 contract.

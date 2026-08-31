@@ -25,6 +25,7 @@ FRAMEWORK_BINARY = Path(
 class TargetFingerprint:
     architecture: str
     os_build: str
+    kernel_osversion: str
     hardware_model: str
     framework_bundle_version: str
     framework_image_uuid: str
@@ -57,6 +58,9 @@ def current_target_fingerprint() -> TargetFingerprint:
     return TargetFingerprint(
         architecture=platform.machine(),
         os_build=_command_output(["/usr/bin/sw_vers", "-buildVersion"]),
+        kernel_osversion=_command_output(
+            ["/usr/sbin/sysctl", "-n", "kern.osversion"]
+        ),
         hardware_model=_command_output(["/usr/sbin/sysctl", "-n", "hw.model"]),
         framework_bundle_version=str(framework_info["CFBundleVersion"]),
         framework_image_uuid=uuid_match.group(0).upper(),

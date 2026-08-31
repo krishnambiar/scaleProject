@@ -1,4 +1,6 @@
 #include "mt_phase1.h"
+#include "mt_phase2.h"
+#include "mt_phase2_internal.h"
 
 #include <dlfcn.h>
 #include <pthread.h>
@@ -20,6 +22,7 @@ _Static_assert(sizeof(uintptr_t) == 8, "The raw register container must be 64-bi
 #define MT_FRAMEWORK_PATH \
     "/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport"
 #define MT_PHASE1_QUEUE_CAPACITY 4096u
+#define MT_PHASE2_QUEUE_CAPACITY 1024u
 #define MT_PHASE1_CONTEXT_CAPACITY 4096u
 #define MT_PHASE1_QUIESCENCE_POLLS 5000u
 #define MT_PHASE1_QUIESCENCE_POLL_NS 1000000L
@@ -67,6 +70,25 @@ typedef struct mt_private_api {
     mt_device_capability_fn is_built_in;
 } mt_private_api_t;
 
+typedef struct mt_phase2_state {
+    mt_phase2_frame_t queue[MT_PHASE2_QUEUE_CAPACITY];
+    size_t queue_head;
+    size_t queue_tail;
+    size_t queue_depth;
+    atomic_uint_fast64_t attempted_frame_count;
+    atomic_uint_fast64_t copied_touch_count;
+    atomic_uint_fast64_t queue_overwrite_count;
+    atomic_uint_fast64_t lock_contention_drop_count;
+    atomic_uint_fast64_t invalid_count_frame_count;
+    atomic_uint_fast64_t null_records_frame_count;
+    atomic_uint_fast64_t device_mismatch_frame_count;
+    atomic_uint_fast64_t record_frame_mismatch_touch_count;
+    atomic_uint_fast64_t record_timestamp_mismatch_touch_count;
+    atomic_uint_fast64_t invalid_state_touch_count;
+    atomic_uint_fast64_t pressure_sentinel_touch_count;
+    atomic_uint_fast64_t nonfinite_touch_count;
+} mt_phase2_state_t;
+
 struct mt_phase1_capture {
     void *framework_handle;
     mt_private_api_t api;
@@ -90,6 +112,7 @@ struct mt_phase1_capture {
     bool running;
     int32_t supports_force;
     int32_t is_built_in;
+    mt_phase2_state_t *phase2;
 };
 
 static pthread_mutex_t g_active_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -219,6 +242,85 @@ static void reject_callback_without_capture(void) {
     );
 }
 
+static void initialize_phase2_counters(mt_phase2_state_t *state) {
+    atomic_init(&state->attempted_frame_count, 0);
+    atomic_init(&state->copied_touch_count, 0);
+    atomic_init(&state->queue_overwrite_count, 0);
+    atomic_init(&state->lock_contention_drop_count, 0);
+    atomic_init(&state->invalid_count_frame_count, 0);
+    atomic_init(&state->null_records_frame_count, 0);
+    atomic_init(&state->device_mismatch_frame_count, 0);
+    atomic_init(&state->record_frame_mismatch_touch_count, 0);
+    atomic_init(&state->record_timestamp_mismatch_touch_count, 0);
+    atomic_init(&state->invalid_state_touch_count, 0);
+    atomic_init(&state->pressure_sentinel_touch_count, 0);
+    atomic_init(&state->nonfinite_touch_count, 0);
+}
+
+static bool phase2_counters_are_lock_free(mt_phase2_state_t *state) {
+    return atomic_is_lock_free(&state->attempted_frame_count) &&
+        atomic_is_lock_free(&state->copied_touch_count) &&
+        atomic_is_lock_free(&state->queue_overwrite_count) &&
+        atomic_is_lock_free(&state->lock_contention_drop_count) &&
+        atomic_is_lock_free(&state->invalid_count_frame_count) &&
+        atomic_is_lock_free(&state->null_records_frame_count) &&
+        atomic_is_lock_free(&state->device_mismatch_frame_count) &&
+        atomic_is_lock_free(&state->record_frame_mismatch_touch_count) &&
+        atomic_is_lock_free(&state->record_timestamp_mismatch_touch_count) &&
+        atomic_is_lock_free(&state->invalid_state_touch_count) &&
+        atomic_is_lock_free(&state->pressure_sentinel_touch_count) &&
+        atomic_is_lock_free(&state->nonfinite_touch_count);
+}
+
+static void reset_phase2_for_start(mt_phase2_state_t *state) {
+    if (state == NULL) {
+        return;
+    }
+    state->queue_head = 0;
+    state->queue_tail = 0;
+    state->queue_depth = 0;
+    atomic_store_explicit(&state->attempted_frame_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&state->copied_touch_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&state->queue_overwrite_count, 0, memory_order_relaxed);
+    atomic_store_explicit(
+        &state->lock_contention_drop_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &state->invalid_count_frame_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &state->null_records_frame_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &state->device_mismatch_frame_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &state->record_frame_mismatch_touch_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &state->record_timestamp_mismatch_touch_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(&state->invalid_state_touch_count, 0, memory_order_relaxed);
+    atomic_store_explicit(
+        &state->pressure_sentinel_touch_count,
+        0,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(&state->nonfinite_touch_count, 0, memory_order_relaxed);
+}
+
 static bool attach_callback_capture(mt_phase1_capture_t *capture) {
     (void)pthread_mutex_lock(&g_callback_gate_mutex);
     if (g_callback_capture != NULL || g_callback_context != NULL ||
@@ -251,8 +353,6 @@ static void mt_phase1_raw_callback(
     uintptr_t raw_frame_register,
     void *refcon
 ) {
-    (void)touch_records_opaque;
-
 #if defined(MT_PHASE1_TESTING)
     if (g_test_before_callback_admission != NULL) {
         g_test_before_callback_admission();
@@ -300,7 +400,8 @@ static void mt_phase1_raw_callback(
         memory_order_relaxed
     ) + 1;
 
-    if (device != capture->device) {
+    bool device_matches = device == capture->device;
+    if (!device_matches) {
         (void)atomic_fetch_add_explicit(
             &capture->callback_device_mismatch_count,
             1,
@@ -316,12 +417,97 @@ static void mt_phase1_raw_callback(
         .host_monotonic_ns = monotonic_time_ns(),
     };
 
+    mt_phase2_state_t *phase2 = capture->phase2;
+    mt_phase2_frame_t phase2_frame;
+    mt_phase2_decode_result_t decode_result = {0};
+    if (phase2 != NULL) {
+        memset(&phase2_frame, 0, sizeof(phase2_frame));
+        phase2_frame.metadata = frame;
+        if (!device_matches) {
+            phase2_frame.layout_profile_id = MT_PHASE2_VERIFIED_PROFILE_ID;
+            phase2_frame.decode_status = MT_PHASE2_DECODE_DEVICE_MISMATCH;
+        } else {
+            mt_phase2_decode_contacts(
+                touch_records_opaque,
+                raw_touch_count_register,
+                raw_frame_register,
+                device_timestamp,
+                &phase2_frame,
+                &decode_result
+            );
+        }
+
+        (void)atomic_fetch_add_explicit(
+            &phase2->attempted_frame_count,
+            1,
+            memory_order_relaxed
+        );
+        (void)atomic_fetch_add_explicit(
+            &phase2->copied_touch_count,
+            decode_result.copied_touches,
+            memory_order_relaxed
+        );
+        (void)atomic_fetch_add_explicit(
+            &phase2->record_frame_mismatch_touch_count,
+            decode_result.record_frame_mismatches,
+            memory_order_relaxed
+        );
+        (void)atomic_fetch_add_explicit(
+            &phase2->record_timestamp_mismatch_touch_count,
+            decode_result.record_timestamp_mismatches,
+            memory_order_relaxed
+        );
+        (void)atomic_fetch_add_explicit(
+            &phase2->invalid_state_touch_count,
+            decode_result.invalid_states,
+            memory_order_relaxed
+        );
+        (void)atomic_fetch_add_explicit(
+            &phase2->pressure_sentinel_touch_count,
+            decode_result.pressure_sentinels,
+            memory_order_relaxed
+        );
+        (void)atomic_fetch_add_explicit(
+            &phase2->nonfinite_touch_count,
+            decode_result.nonfinite_touches,
+            memory_order_relaxed
+        );
+        if ((phase2_frame.decode_status & MT_PHASE2_DECODE_INVALID_COUNT) != 0) {
+            (void)atomic_fetch_add_explicit(
+                &phase2->invalid_count_frame_count,
+                1,
+                memory_order_relaxed
+            );
+        }
+        if ((phase2_frame.decode_status & MT_PHASE2_DECODE_NULL_RECORDS) != 0) {
+            (void)atomic_fetch_add_explicit(
+                &phase2->null_records_frame_count,
+                1,
+                memory_order_relaxed
+            );
+        }
+        if (!device_matches) {
+            (void)atomic_fetch_add_explicit(
+                &phase2->device_mismatch_frame_count,
+                1,
+                memory_order_relaxed
+            );
+        }
+    }
+
     if (pthread_mutex_trylock(&capture->queue_mutex) != 0) {
         (void)atomic_fetch_add_explicit(
             &capture->lock_contention_drop_count,
             1,
             memory_order_relaxed
         );
+        if (phase2 != NULL) {
+            (void)atomic_fetch_add_explicit(
+                &phase2->lock_contention_drop_count,
+                1,
+                memory_order_relaxed
+            );
+        }
         finish_callback(capture);
         return;
     }
@@ -345,6 +531,23 @@ static void mt_phase1_raw_callback(
         memory_order_relaxed
     );
 
+    if (phase2 != NULL) {
+        if (phase2->queue_depth == MT_PHASE2_QUEUE_CAPACITY) {
+            phase2->queue_tail =
+                (phase2->queue_tail + 1u) % MT_PHASE2_QUEUE_CAPACITY;
+            phase2->queue_depth -= 1u;
+            (void)atomic_fetch_add_explicit(
+                &phase2->queue_overwrite_count,
+                1,
+                memory_order_relaxed
+            );
+        }
+        phase2->queue[phase2->queue_head] = phase2_frame;
+        phase2->queue_head =
+            (phase2->queue_head + 1u) % MT_PHASE2_QUEUE_CAPACITY;
+        phase2->queue_depth += 1u;
+    }
+
     (void)pthread_mutex_unlock(&capture->queue_mutex);
     finish_callback(capture);
 }
@@ -353,6 +556,8 @@ static void release_capture_resources(mt_phase1_capture_t *capture) {
     if (capture == NULL) {
         return;
     }
+    free(capture->phase2);
+    capture->phase2 = NULL;
     if (capture->device != NULL && capture->api.release != NULL) {
         capture->api.release(capture->device);
         capture->device = NULL;
@@ -377,6 +582,270 @@ size_t mt_phase1_capture_stats_size(void) {
 
 const char *mt_phase1_framework_path(void) {
     return MT_FRAMEWORK_PATH;
+}
+
+uint32_t mt_phase2_bridge_abi_version(void) {
+    return MT_PHASE2_BRIDGE_ABI_VERSION;
+}
+
+size_t mt_phase2_touch_size(void) {
+    return sizeof(mt_phase2_touch_t);
+}
+
+size_t mt_phase2_frame_size(void) {
+    return sizeof(mt_phase2_frame_t);
+}
+
+size_t mt_phase2_capture_stats_size(void) {
+    return sizeof(mt_phase2_capture_stats_t);
+}
+
+size_t mt_phase2_source_layout_size(void) {
+    return sizeof(mt_phase2_source_layout_t);
+}
+
+static uint64_t phase2_layout_hash_value(uint64_t hash, uint64_t value) {
+    for (uint32_t shift = 0; shift < 64; shift += 8) {
+        hash ^= (value >> shift) & UINT64_C(0xff);
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+uint64_t mt_phase2_output_layout_fingerprint(void) {
+    const uint64_t values[] = {
+        sizeof(mt_phase2_touch_t),
+        _Alignof(mt_phase2_touch_t),
+        offsetof(mt_phase2_touch_t, copied_fields),
+        offsetof(mt_phase2_touch_t, path_index),
+        offsetof(mt_phase2_touch_t, state),
+        offsetof(mt_phase2_touch_t, finger_id),
+        offsetof(mt_phase2_touch_t, hand_id),
+        offsetof(mt_phase2_touch_t, normalized_x),
+        offsetof(mt_phase2_touch_t, normalized_y),
+        offsetof(mt_phase2_touch_t, z_total),
+        offsetof(mt_phase2_touch_t, pressure_candidate),
+        offsetof(mt_phase2_touch_t, z_density),
+        offsetof(mt_phase2_touch_t, normalized_x_bits),
+        offsetof(mt_phase2_touch_t, normalized_y_bits),
+        offsetof(mt_phase2_touch_t, z_total_bits),
+        offsetof(mt_phase2_touch_t, pressure_candidate_bits),
+        offsetof(mt_phase2_touch_t, z_density_bits),
+        sizeof(mt_phase2_frame_t),
+        _Alignof(mt_phase2_frame_t),
+        offsetof(mt_phase2_frame_t, metadata),
+        offsetof(mt_phase2_frame_t, layout_profile_id),
+        offsetof(mt_phase2_frame_t, decode_status),
+        offsetof(mt_phase2_frame_t, copied_touch_count),
+        offsetof(mt_phase2_frame_t, touches),
+        sizeof(mt_phase2_capture_stats_t),
+        _Alignof(mt_phase2_capture_stats_t),
+        offsetof(mt_phase2_capture_stats_t, attempted_frame_count),
+        offsetof(mt_phase2_capture_stats_t, copied_touch_count),
+        offsetof(mt_phase2_capture_stats_t, queue_overwrite_count),
+        offsetof(mt_phase2_capture_stats_t, lock_contention_drop_count),
+        offsetof(mt_phase2_capture_stats_t, invalid_count_frame_count),
+        offsetof(mt_phase2_capture_stats_t, null_records_frame_count),
+        offsetof(mt_phase2_capture_stats_t, device_mismatch_frame_count),
+        offsetof(mt_phase2_capture_stats_t, record_frame_mismatch_touch_count),
+        offsetof(mt_phase2_capture_stats_t, record_timestamp_mismatch_touch_count),
+        offsetof(mt_phase2_capture_stats_t, invalid_state_touch_count),
+        offsetof(mt_phase2_capture_stats_t, pressure_sentinel_touch_count),
+        offsetof(mt_phase2_capture_stats_t, nonfinite_touch_count),
+        offsetof(mt_phase2_capture_stats_t, queue_depth),
+    };
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (size_t index = 0; index < sizeof(values) / sizeof(values[0]); ++index) {
+        hash = phase2_layout_hash_value(hash, values[index]);
+    }
+    return hash;
+}
+
+const char *mt_phase2_verified_profile_name(void) {
+    return "mac16_8-macos_25D771280a-mts_9430_5-"
+        "uuid_40D691BB916631E0959E351863FF09A0-contact_v1";
+}
+
+int32_t mt_phase2_get_source_layout(mt_phase2_source_layout_t *out_layout) {
+    if (out_layout == NULL) {
+        return MT_PHASE1_ERROR_INVALID_ARGUMENT;
+    }
+    *out_layout = *mt_phase2_compiled_source_layout();
+    return MT_PHASE1_OK;
+}
+
+int32_t mt_phase2_capture_enable_profile(
+    mt_phase1_capture_t *capture,
+    uint32_t profile_id,
+    char *error_buffer,
+    size_t error_buffer_size
+) {
+    clear_error(error_buffer, error_buffer_size);
+    if (capture == NULL) {
+        write_error(error_buffer, error_buffer_size, "capture is NULL");
+        return MT_PHASE1_ERROR_INVALID_ARGUMENT;
+    }
+    if (profile_id != MT_PHASE2_VERIFIED_PROFILE_ID) {
+        write_error(
+            error_buffer,
+            error_buffer_size,
+            "unknown Phase 2 layout profile ID %u",
+            profile_id
+        );
+        return MT_PHASE1_ERROR_PHASE2_PROFILE;
+    }
+
+    (void)pthread_mutex_lock(&g_active_capture_mutex);
+    if (capture->running || capture->registered || g_active_capture == capture ||
+        atomic_load_explicit(
+            &capture->in_flight_callback_count,
+            memory_order_acquire
+        ) != 0) {
+        write_error(
+            error_buffer,
+            error_buffer_size,
+            "Phase 2 profile requires a never-started or fully quiesced capture"
+        );
+        (void)pthread_mutex_unlock(&g_active_capture_mutex);
+        return MT_PHASE1_ERROR_INVALID_STATE;
+    }
+    if (capture->phase2 != NULL) {
+        (void)pthread_mutex_unlock(&g_active_capture_mutex);
+        return MT_PHASE1_OK;
+    }
+    if (capture->is_built_in != 1 || capture->supports_force != 1) {
+        write_error(
+            error_buffer,
+            error_buffer_size,
+            "Phase 2 requires a verified built-in Force Touch device "
+            "(built_in=%d supports_force=%d)",
+            capture->is_built_in,
+            capture->supports_force
+        );
+        (void)pthread_mutex_unlock(&g_active_capture_mutex);
+        return MT_PHASE1_ERROR_PHASE2_PROFILE;
+    }
+    if (!mt_phase2_native_target_matches(
+            capture->framework_handle,
+            error_buffer,
+            error_buffer_size
+        )) {
+        (void)pthread_mutex_unlock(&g_active_capture_mutex);
+        return MT_PHASE1_ERROR_PHASE2_PROFILE;
+    }
+
+    mt_phase2_state_t *state = calloc(1, sizeof(*state));
+    if (state == NULL) {
+        write_error(error_buffer, error_buffer_size, "Phase 2 queue allocation failed");
+        (void)pthread_mutex_unlock(&g_active_capture_mutex);
+        return MT_PHASE1_ERROR_ALLOCATION;
+    }
+    initialize_phase2_counters(state);
+    if (!phase2_counters_are_lock_free(state)) {
+        free(state);
+        write_error(
+            error_buffer,
+            error_buffer_size,
+            "Phase 2 callback-path atomics are not lock-free on this target"
+        );
+        (void)pthread_mutex_unlock(&g_active_capture_mutex);
+        return MT_PHASE1_ERROR_INTERNAL;
+    }
+    (void)pthread_mutex_lock(&capture->queue_mutex);
+    capture->phase2 = state;
+    (void)pthread_mutex_unlock(&capture->queue_mutex);
+    (void)pthread_mutex_unlock(&g_active_capture_mutex);
+    return MT_PHASE1_OK;
+}
+
+int32_t mt_phase2_capture_poll(
+    mt_phase1_capture_t *capture,
+    mt_phase2_frame_t *out_frame
+) {
+    if (capture == NULL || out_frame == NULL) {
+        return MT_PHASE1_ERROR_INVALID_ARGUMENT;
+    }
+    mt_phase2_state_t *state = capture->phase2;
+    if (state == NULL) {
+        return MT_PHASE1_ERROR_INVALID_STATE;
+    }
+
+    (void)pthread_mutex_lock(&capture->queue_mutex);
+    if (state->queue_depth == 0) {
+        (void)pthread_mutex_unlock(&capture->queue_mutex);
+        return 0;
+    }
+    *out_frame = state->queue[state->queue_tail];
+    state->queue_tail = (state->queue_tail + 1u) % MT_PHASE2_QUEUE_CAPACITY;
+    state->queue_depth -= 1u;
+    (void)pthread_mutex_unlock(&capture->queue_mutex);
+    return 1;
+}
+
+int32_t mt_phase2_capture_get_stats(
+    mt_phase1_capture_t *capture,
+    mt_phase2_capture_stats_t *out_stats
+) {
+    if (capture == NULL || out_stats == NULL) {
+        return MT_PHASE1_ERROR_INVALID_ARGUMENT;
+    }
+    mt_phase2_state_t *state = capture->phase2;
+    if (state == NULL) {
+        return MT_PHASE1_ERROR_INVALID_STATE;
+    }
+
+    out_stats->attempted_frame_count = atomic_load_explicit(
+        &state->attempted_frame_count,
+        memory_order_relaxed
+    );
+    out_stats->copied_touch_count = atomic_load_explicit(
+        &state->copied_touch_count,
+        memory_order_relaxed
+    );
+    out_stats->queue_overwrite_count = atomic_load_explicit(
+        &state->queue_overwrite_count,
+        memory_order_relaxed
+    );
+    out_stats->lock_contention_drop_count = atomic_load_explicit(
+        &state->lock_contention_drop_count,
+        memory_order_relaxed
+    );
+    out_stats->invalid_count_frame_count = atomic_load_explicit(
+        &state->invalid_count_frame_count,
+        memory_order_relaxed
+    );
+    out_stats->null_records_frame_count = atomic_load_explicit(
+        &state->null_records_frame_count,
+        memory_order_relaxed
+    );
+    out_stats->device_mismatch_frame_count = atomic_load_explicit(
+        &state->device_mismatch_frame_count,
+        memory_order_relaxed
+    );
+    out_stats->record_frame_mismatch_touch_count = atomic_load_explicit(
+        &state->record_frame_mismatch_touch_count,
+        memory_order_relaxed
+    );
+    out_stats->record_timestamp_mismatch_touch_count = atomic_load_explicit(
+        &state->record_timestamp_mismatch_touch_count,
+        memory_order_relaxed
+    );
+    out_stats->invalid_state_touch_count = atomic_load_explicit(
+        &state->invalid_state_touch_count,
+        memory_order_relaxed
+    );
+    out_stats->pressure_sentinel_touch_count = atomic_load_explicit(
+        &state->pressure_sentinel_touch_count,
+        memory_order_relaxed
+    );
+    out_stats->nonfinite_touch_count = atomic_load_explicit(
+        &state->nonfinite_touch_count,
+        memory_order_relaxed
+    );
+    (void)pthread_mutex_lock(&capture->queue_mutex);
+    out_stats->queue_depth = (uint64_t)state->queue_depth;
+    (void)pthread_mutex_unlock(&capture->queue_mutex);
+    return MT_PHASE1_OK;
 }
 
 int32_t mt_phase1_capture_create(
@@ -523,6 +992,14 @@ int32_t mt_phase1_capture_start(
         write_error(error_buffer, error_buffer_size, "capture is already running");
         return MT_PHASE1_ERROR_ALREADY_ACTIVE;
     }
+    if (capture->phase2 != NULL && start_options != 0) {
+        write_error(
+            error_buffer,
+            error_buffer_size,
+            "Phase 2 decoding is verified only with MTDeviceStart option value zero"
+        );
+        return MT_PHASE1_ERROR_PHASE2_PROFILE;
+    }
 
     (void)pthread_mutex_lock(&g_active_capture_mutex);
     if (g_active_capture != NULL) {
@@ -539,6 +1016,7 @@ int32_t mt_phase1_capture_start(
     capture->queue_head = 0;
     capture->queue_tail = 0;
     capture->queue_depth = 0;
+    reset_phase2_for_start(capture->phase2);
     (void)pthread_mutex_unlock(&capture->queue_mutex);
     atomic_store_explicit(&capture->callback_count, 0, memory_order_relaxed);
     atomic_store_explicit(&capture->enqueued_count, 0, memory_order_relaxed);

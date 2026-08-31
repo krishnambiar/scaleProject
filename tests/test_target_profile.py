@@ -8,6 +8,7 @@ class TargetProfileTests(unittest.TestCase):
         self.target = TargetFingerprint(
             architecture="arm64",
             os_build="build",
+            kernel_osversion="kernel-build",
             hardware_model="model",
             framework_bundle_version="version",
             framework_image_uuid="UUID",
@@ -29,4 +30,3 @@ class TargetProfileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

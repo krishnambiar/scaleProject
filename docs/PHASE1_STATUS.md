@@ -25,4 +25,7 @@ PYTHONPATH=src python3 -m trackpad_scale.phase1_probe \
   --json-out artifacts/phase1-final-guided.json
 ```
 
-Only the stage histograms, ordering facts, queue accounting, and operator labels should be reported. Do not invent a pass percentage after the fact. Phase 2 remains intentionally absent.
+Only the stage histograms, ordering facts, queue accounting, and operator labels
+should be reported. Do not invent a pass percentage after the fact. This file
+is the historical Phase 1 status; the separately enabled Phase 2 work is
+tracked in [PHASE2_STATUS.md](PHASE2_STATUS.md).

@@ -1,9 +1,10 @@
 {
   "schema_version": 1,
-  "scope": "Phase 1 machine-ABI evidence only; no touch-record layout is defined",
+  "scope": "Phase 1 transport plus exact-target Phase 2 guarded source layout; pressure behavior remains experimental and uncalibrated",
   "target": {
     "architecture": "arm64",
     "os_build": "25D771280a",
+    "kernel_osversion": "25D2128",
     "hardware_model": "Mac16,8",
     "framework_bundle_version": "9430.5",
     "framework_image_uuid": "40D691BB-9166-31E0-959E-351863FF09A0"
@@ -16,16 +17,64 @@
     "x3": "raw frame-number register",
     "x4": "registration refcon"
   },
+  "phase2_source_layout": {
+    "profile_id": 1,
+    "profile_name": "mac16_8-macos_25D771280a-mts_9430_5-uuid_40D691BB916631E0959E351863FF09A0-contact_v1",
+    "descriptor_version": 1,
+    "record_size": 96,
+    "maximum_touch_count": 32,
+    "container": "contiguous callback-local array copied by MTGetPathFrame with a 96-byte stride",
+    "fields": {
+      "record_frame": {"offset": 0, "size": 8, "encoding": "unsigned 64-bit register copy"},
+      "record_timestamp": {"offset": 8, "size": 8, "encoding": "IEEE-754 binary64"},
+      "path_index": {"offset": 16, "size": 4, "encoding": "raw 32-bit integer"},
+      "state": {"offset": 20, "size": 4, "encoding": "raw 32-bit integer"},
+      "finger_id": {"offset": 24, "size": 4, "encoding": "raw 32-bit integer"},
+      "hand_id": {"offset": 28, "size": 4, "encoding": "raw signed 32-bit integer"},
+      "normalized_x": {"offset": 32, "size": 4, "encoding": "IEEE-754 binary32"},
+      "normalized_y": {"offset": 36, "size": 4, "encoding": "IEEE-754 binary32"},
+      "z_total": {"offset": 48, "size": 4, "encoding": "IEEE-754 binary32"},
+      "pressure_candidate": {"offset": 52, "size": 4, "encoding": "IEEE-754 binary32, arbitrary raw sensor coordinate, not grams"},
+      "z_density": {"offset": 92, "size": 4, "encoding": "IEEE-754 binary32"}
+    },
+    "structural_evidence": [
+      "MTAlg_IssueContactFrameCallbacks allocates 0xc00 bytes for 32 records",
+      "MTGetPathFrame advances output by 0x60 and copies six 16-byte blocks per accepted contact",
+      "MTContact_isActive reads zTotal at callback-record offset 0x30 and state at 0x14",
+      "MTPathPrintCallback reads normalized position, zTotal, the force candidate, density, state, and identity fields from the listed offsets",
+      "mt_FillMTContactDirectFromBinary and mt_FillMTContactDirectFromPrecise write the same scalar encodings to the listed offsets"
+    ],
+    "behavioral_status": "candidate pressure field requires controlled rest/light/medium/harder/release validation",
+    "decoder_guards": {
+      "allowed_state_range": {
+        "minimum": 0,
+        "maximum": 7,
+        "evidence": "target framework state-name table contains eight indexed lifecycle strings"
+      },
+      "pressure_sentinel": {
+        "value": 43690.0,
+        "encoding": "IEEE-754 binary32",
+        "evidence": "target framework parse path can write the 0xAAAA missing/invalid marker into the candidate slot"
+      },
+      "steady_touch_state_for_plateaus": {
+        "value": 4,
+        "label": "Touching",
+        "evidence": "target framework state-name table and lifecycle dataflow"
+      }
+    }
+  },
   "explicit_unknowns": [
     "Apple source typedef for the touch-count argument",
     "Apple source typedef and width contract for the frame-number argument",
-    "touch-record struct size, alignment, fields, and offsets",
-    "pressure-related field locations and native types",
+    "source typedef names for every verified Phase 2 record field",
+    "meaning of every unselected byte in the 96-byte contact record",
+    "physical unit and force-response reliability of the pressure candidate",
     "semantics of MTDeviceStart option bits other than zero"
   ],
   "runtime_evidence": {
-    "start_options_zero": "returned success in 25 consecutive ASan/UBSan start/stop/destroy cycles",
+    "start_options_zero": "returned success in 25 Phase 1 and 10 opt-in Phase 2 ASan/UBSan start/stop cycles",
     "callback_pointer_interoperability": "verified by thousands of live callbacks",
+    "phase2_unlabelled_smoke": "live one-contact records passed profile/frame/timestamp/scalar guards; not behavioral pressure evidence",
     "idle_behavior": "continuous idle frames are suppressed; releases produced terminal count-zero callbacks"
   },
   "evidence_method": "Local dyld shared-cache export inspection, arm64 disassembly, and target-Mac runtime diagnostics only; no third-party project source"
