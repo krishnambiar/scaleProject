@@ -1,6 +1,7 @@
 """Operator-guided, clean-room Phase 2 pressure-candidate diagnostic."""
 
 import argparse
+import hashlib
 import json
 import math
 import signal
@@ -195,6 +196,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="write raw frames and descriptive evidence to this JSON file",
     )
+    parser.add_argument(
+        "--reanalyze-json",
+        type=Path,
+        help=(
+            "reassess a saved Phase 2 evidence file without loading the private "
+            "framework or recapturing data"
+        ),
+    )
     return parser
 
 
@@ -384,6 +393,33 @@ def _summarize_across_cycles(
     }
 
 
+def _contact_confound_reasons(
+    ordered_stages: Sequence[Tuple[str, Phase2StageReport]],
+) -> List[str]:
+    """Return only contact facts established by count and lifecycle state.
+
+    `path_index` is the observed contact-track continuity key.  The other copied
+    identity fields remain raw classification codes, so their variation while
+    the verified touch count stays at one is descriptive rather than proof of a
+    second contact.
+    """
+
+    confounds = {
+        reason
+        for _, stage_report in ordered_stages
+        for reason in stage_report.excluded_frame_counts
+        if reason
+        in {
+            "multiple_contacts",
+            "zero_contact",
+            "nonsteady_touch_state",
+            "path_change",
+        }
+        and stage_report.excluded_frame_counts[reason] > 0
+    }
+    return sorted(confounds)
+
+
 def _classify_outcome(
     whole_report: Phase2StageReport,
     phase2_stats: Dict[str, int],
@@ -471,7 +507,7 @@ def _classify_outcome(
                 reason_codes.append(f"cycle_{cycle}:settled_windows_not_confirmed")
     elif any(report["contact_confound"] for report in cycle_reports):
         outcome = "inconclusive_contact_confound"
-        reason_codes.append("extra_contact_identity_or_state_confound")
+        reason_codes.append("contact_count_state_or_path_confound")
     elif any(not report["complete_pressure_plateaus"] for report in cycle_reports):
         outcome = "inconclusive_incomplete"
         for report in cycle_reports:
@@ -530,6 +566,160 @@ def _classify_outcome(
         ),
         "calibration_authorized": False,
         "grams_claimed": False,
+    }
+
+
+def _derive_capture_analysis(
+    report: Dict[str, object],
+    records: Sequence[Tuple[Dict[str, object], RawTouchFrame]],
+) -> Dict[str, object]:
+    """Derive the Phase 2 assessment from preserved raw capture evidence."""
+
+    expected_layout = report.get("expected_phase2_source_layout")
+    stage_windows = report.get("stage_windows")
+    phase2_stats = report.get("phase2_capture_stats")
+    phase1_stats = report.get("phase1_capture_stats")
+    if not isinstance(expected_layout, dict):
+        raise ValueError("saved report is missing the Phase 2 source layout")
+    if not isinstance(stage_windows, list):
+        raise ValueError("saved report is missing stage windows")
+    if not isinstance(phase2_stats, dict) or not isinstance(phase1_stats, dict):
+        raise ValueError("saved report is missing capture statistics")
+
+    requested_cycles = int(report.get("requested_cycles", 0))
+    if requested_cycles <= 0:
+        raise ValueError("saved report has an invalid requested cycle count")
+    expected_profile_id = int(expected_layout["profile_id"])
+    maximum_touch_count = int(expected_layout["maximum_touch_count"])
+
+    def window_for(cycle: int, stage: str) -> Dict[str, object]:
+        matches = [
+            item
+            for item in stage_windows
+            if isinstance(item, dict)
+            and item.get("cycle") == cycle
+            and item.get("stage") == stage
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"saved report must contain exactly one window for "
+                f"cycle {cycle} stage {stage}"
+            )
+        return matches[0]
+
+    stage_reports_by_cycle: Dict[int, Dict[str, Phase2StageReport]] = defaultdict(dict)
+    cycle_reports: List[Dict[str, object]] = []
+    for cycle in range(1, requested_cycles + 1):
+        cycle_windows = {
+            stage.label: window_for(cycle, stage.label)
+            for stage in PRESSURE_STAGES
+        }
+        for stage in PRESSURE_STAGES:
+            frames = _frames_for_window(records, cycle_windows[stage.label])
+            stage_reports_by_cycle[cycle][stage.label] = analyze_phase2_stage(
+                f"cycle_{cycle}_{stage.label}",
+                frames,
+                expected_profile_id=expected_profile_id,
+                maximum_touch_count=maximum_touch_count,
+            )
+        ordered = [
+            (label, stage_reports_by_cycle[cycle][label])
+            for label in ("rest", "light", "medium", "harder")
+        ]
+        sequence = summarize_pressure_sequence(ordered)
+        release_frames = _frames_for_window(
+            records,
+            cycle_windows["release"],
+            include_transition=True,
+        )
+        no_contact_frames = _frames_for_window(
+            records,
+            cycle_windows["no_contact"],
+        )
+        contact_reasons = _contact_confound_reasons(ordered)
+        cycle_reports.append(
+            {
+                "cycle": cycle,
+                "stages": {
+                    label: report_item.to_dict()
+                    for label, report_item in stage_reports_by_cycle[cycle].items()
+                },
+                "pressure_sequence": sequence,
+                "complete_pressure_plateaus": all(
+                    report_item.primary_sample_count > 0
+                    for _, report_item in ordered
+                ),
+                "contact_confound": bool(contact_reasons),
+                "contact_confound_reasons": contact_reasons,
+                "release_count_zero_observed": any(
+                    frame.metadata.raw_touch_count_register == 0
+                    for frame in release_frames
+                ),
+                "no_contact_baseline_clear": not any(
+                    frame.metadata.raw_touch_count_register > 0
+                    for frame in no_contact_frames
+                ),
+                "no_contact_callback_count": len(no_contact_frames),
+                "operator_confirmed_all_settled_windows": all(
+                    bool(window.get("operator_confirmed_settled"))
+                    for window in cycle_windows.values()
+                ),
+            }
+        )
+
+    whole_report = analyze_phase2_stage(
+        "whole_capture",
+        [frame for _, frame in records],
+        expected_profile_id=expected_profile_id,
+        maximum_touch_count=maximum_touch_count,
+    )
+    expected_materialized = (
+        int(phase2_stats.get("attempted_frame_count", 0))
+        - int(phase2_stats.get("lock_contention_drop_count", 0))
+        - int(phase2_stats.get("queue_overwrite_count", 0))
+        - int(phase2_stats.get("queue_depth", 0))
+    )
+    materialization = {
+        "attempted_frame_count": phase2_stats["attempted_frame_count"],
+        "lock_contention_drop_count": phase2_stats[
+            "lock_contention_drop_count"
+        ],
+        "queue_overwrite_count": phase2_stats["queue_overwrite_count"],
+        "final_queue_depth": phase2_stats["queue_depth"],
+        "expected_materialized_frame_count": expected_materialized,
+        "observed_materialized_frame_count": len(records),
+        "balances": expected_materialized == len(records),
+    }
+    return {
+        "analysis_rule_revision": "single-contact-path-continuity-v2",
+        "cycle_reports": cycle_reports,
+        "whole_capture_analysis": whole_report.to_dict(),
+        "across_cycles": _summarize_across_cycles(
+            cycle_reports, stage_reports_by_cycle
+        ),
+        "phase2_materialization_accounting": materialization,
+        "candidate_outcome": _classify_outcome(
+            whole_report,
+            phase2_stats,
+            phase1_stats,
+            cycle_reports,
+            stage_reports_by_cycle,
+            len(records),
+        ),
+        "multi_contact_policy": (
+            "Multi-contact frames are retained per path_index and excluded from "
+            "primary evidence; candidate values are never summed or aggregated."
+        ),
+        "identity_code_policy": (
+            "path_index is used for contact-track continuity. finger_id and "
+            "hand_id remain descriptive raw codes and do not independently "
+            "establish an extra contact."
+        ),
+        "known_geometry_limit": (
+            "No contact-area/shape field has yet been verified. X/Y, zTotal, and "
+            "zDensity are reported as available confound indicators, but cannot "
+            "fully rule out fingertip-geometry effects."
+        ),
     }
 
 
@@ -721,136 +911,7 @@ def run(arguments: argparse.Namespace) -> Dict[str, object]:
         )
         raise Phase2DiagnosticError(str(error), report) from error
 
-    expected_layout = profile["phase2_source_layout"]
-    expected_profile_id = int(expected_layout["profile_id"])
-    maximum_touch_count = int(expected_layout["maximum_touch_count"])
-
-    stage_reports_by_cycle: Dict[int, Dict[str, Phase2StageReport]] = defaultdict(dict)
-    cycle_reports: List[Dict[str, object]] = []
-    for cycle in range(1, arguments.cycles + 1):
-        for stage in PRESSURE_STAGES:
-            window = next(
-                item
-                for item in stage_windows
-                if item["cycle"] == cycle and item["stage"] == stage.label
-            )
-            frames = _frames_for_window(records, window)
-            stage_reports_by_cycle[cycle][stage.label] = analyze_phase2_stage(
-                f"cycle_{cycle}_{stage.label}",
-                frames,
-                expected_profile_id=expected_profile_id,
-                maximum_touch_count=maximum_touch_count,
-            )
-        ordered = [
-            (label, stage_reports_by_cycle[cycle][label])
-            for label in ("rest", "light", "medium", "harder")
-        ]
-        sequence = summarize_pressure_sequence(ordered)
-        release_window = next(
-            item
-            for item in stage_windows
-            if item["cycle"] == cycle and item["stage"] == "release"
-        )
-        release_frames = _frames_for_window(
-            records, release_window, include_transition=True
-        )
-        no_contact_window = next(
-            item
-            for item in stage_windows
-            if item["cycle"] == cycle and item["stage"] == "no_contact"
-        )
-        no_contact_frames = _frames_for_window(records, no_contact_window)
-        contact_reasons = {
-            reason
-            for _, stage_report in ordered
-            for reason in stage_report.excluded_frame_counts
-            if reason
-            in {
-                "multiple_contacts",
-                "zero_contact",
-                "identity_change",
-                "nonsteady_touch_state",
-            }
-            and stage_report.excluded_frame_counts[reason] > 0
-        }
-        cycle_reports.append(
-            {
-                "cycle": cycle,
-                "stages": {
-                    label: report_item.to_dict()
-                    for label, report_item in stage_reports_by_cycle[cycle].items()
-                },
-                "pressure_sequence": sequence,
-                "complete_pressure_plateaus": all(
-                    report_item.primary_sample_count > 0
-                    for _, report_item in ordered
-                ),
-                "contact_confound": bool(contact_reasons),
-                "contact_confound_reasons": sorted(contact_reasons),
-                "release_count_zero_observed": any(
-                    frame.metadata.raw_touch_count_register == 0
-                    for frame in release_frames
-                ),
-                "no_contact_baseline_clear": not any(
-                    frame.metadata.raw_touch_count_register > 0
-                    for frame in no_contact_frames
-                ),
-                "no_contact_callback_count": len(no_contact_frames),
-                "operator_confirmed_all_settled_windows": bool(
-                    arguments.confirm_stages
-                ),
-            }
-        )
-
-    whole_report = analyze_phase2_stage(
-        "whole_capture",
-        [frame for _, frame in records],
-        expected_profile_id=expected_profile_id,
-        maximum_touch_count=maximum_touch_count,
-    )
-    report["cycle_reports"] = cycle_reports
-    report["whole_capture_analysis"] = whole_report.to_dict()
-    report["across_cycles"] = _summarize_across_cycles(
-        cycle_reports, stage_reports_by_cycle
-    )
-    phase2_stats = report["phase2_capture_stats"]
-    phase1_stats = report["phase1_capture_stats"]
-    assert isinstance(phase2_stats, dict)
-    assert isinstance(phase1_stats, dict)
-    expected_materialized = (
-        phase2_stats["attempted_frame_count"]
-        - phase2_stats["lock_contention_drop_count"]
-        - phase2_stats["queue_overwrite_count"]
-        - phase2_stats["queue_depth"]
-    )
-    report["phase2_materialization_accounting"] = {
-        "attempted_frame_count": phase2_stats["attempted_frame_count"],
-        "lock_contention_drop_count": phase2_stats[
-            "lock_contention_drop_count"
-        ],
-        "queue_overwrite_count": phase2_stats["queue_overwrite_count"],
-        "final_queue_depth": phase2_stats["queue_depth"],
-        "expected_materialized_frame_count": expected_materialized,
-        "observed_materialized_frame_count": len(records),
-        "balances": expected_materialized == len(records),
-    }
-    report["candidate_outcome"] = _classify_outcome(
-        whole_report,
-        phase2_stats,
-        phase1_stats,
-        cycle_reports,
-        stage_reports_by_cycle,
-        len(records),
-    )
-    report["multi_contact_policy"] = (
-        "Multi-contact frames are retained per path_index and excluded from "
-        "primary evidence; candidate values are never summed or aggregated."
-    )
-    report["known_geometry_limit"] = (
-        "No contact-area/shape field has yet been verified. X/Y, zTotal, and "
-        "zDensity are reported as available confound indicators, but cannot "
-        "fully rule out fingertip-geometry effects."
-    )
+    report.update(_derive_capture_analysis(report, records))
     report["completed_utc"] = _utc_now()
     report["completed"] = True
 
@@ -868,9 +929,189 @@ def _write_report(path: Path, report: Dict[str, object]) -> None:
     )
 
 
+def _validate_reassessment_source(source: Dict[str, object]) -> None:
+    """Reject saved evidence that lacks the original capture provenance."""
+
+    reasons: List[str] = []
+    if source.get("schema_version") != 1:
+        reasons.append("unsupported_schema_version")
+    if source.get("phase") != 2:
+        reasons.append("not_a_phase2_report")
+    if source.get("experiment") != "raw pressure candidate ordinal response":
+        reasons.append("unexpected_experiment_type")
+    if source.get("completed") is not True:
+        reasons.append("capture_not_completed")
+    if source.get("preflight_status") != "accepted":
+        reasons.append("preflight_not_accepted")
+    if source.get("target_profile_match") is not True:
+        reasons.append("target_profile_not_matched")
+    if source.get("target_profile_mismatches") != []:
+        reasons.append("target_profile_mismatches_present")
+    if source.get("start_options") != 0:
+        reasons.append("unverified_start_options")
+    if source.get("start_native_status") != 0:
+        reasons.append("capture_start_not_successful")
+    if source.get("stop_native_status") != 0:
+        reasons.append("capture_stop_not_successful")
+    if not isinstance(source.get("completed_utc"), str):
+        reasons.append("completion_timestamp_missing")
+    for key in ("stop_error", "collector_error", "stats_error", "close_error"):
+        if source.get(key) is not None:
+            reasons.append(f"{key}_present")
+
+    profile = load_verified_profile()
+    expected_target = profile.get("target")
+    if source.get("expected_target") != expected_target:
+        reasons.append("expected_target_differs_from_packaged_profile")
+    if source.get("actual_target") != expected_target:
+        reasons.append("captured_target_differs_from_packaged_profile")
+
+    saved_layout = source.get("expected_phase2_source_layout")
+    packaged_layout = profile.get("phase2_source_layout")
+    layout_identity_keys = (
+        "profile_id",
+        "profile_name",
+        "descriptor_version",
+        "record_size",
+        "maximum_touch_count",
+        "fields",
+        "decoder_guards",
+    )
+    if not isinstance(saved_layout, dict) or not isinstance(packaged_layout, dict):
+        reasons.append("phase2_layout_missing")
+    elif any(
+        saved_layout.get(key) != packaged_layout.get(key)
+        for key in layout_identity_keys
+    ):
+        reasons.append("phase2_layout_differs_from_packaged_profile")
+
+    bridge = source.get("validated_bridge_abi")
+    if not isinstance(bridge, dict) or not isinstance(packaged_layout, dict):
+        reasons.append("validated_bridge_abi_missing")
+    else:
+        if bridge.get("bridge_abi_version") != 1:
+            reasons.append("unexpected_bridge_abi_version")
+        if bridge.get("profile_id") != packaged_layout.get("profile_id"):
+            reasons.append("bridge_profile_id_mismatch")
+        if bridge.get("profile_name") != packaged_layout.get("profile_name"):
+            reasons.append("bridge_profile_name_mismatch")
+        expected_sizes = [64, 2104, 104, 128]
+        if bridge.get("native_project_owned_struct_sizes") != expected_sizes:
+            reasons.append("native_project_owned_struct_sizes_mismatch")
+        if bridge.get("python_project_owned_struct_sizes") != expected_sizes:
+            reasons.append("python_project_owned_struct_sizes_mismatch")
+        if bridge.get("output_layout_fingerprint") != "0xcc805c390dc2e7c1":
+            reasons.append("output_layout_fingerprint_mismatch")
+
+        bridge_layout = bridge.get("source_layout")
+        if not isinstance(bridge_layout, dict):
+            reasons.append("bridge_source_layout_missing")
+        else:
+            expected_bridge_layout = {
+                "descriptor_version": packaged_layout.get("descriptor_version"),
+                "profile_id": packaged_layout.get("profile_id"),
+                "record_size": packaged_layout.get("record_size"),
+                "maximum_touch_count": packaged_layout.get(
+                    "maximum_touch_count"
+                ),
+            }
+            fields = packaged_layout.get("fields")
+            if isinstance(fields, dict):
+                for name, field in fields.items():
+                    if isinstance(field, dict):
+                        expected_bridge_layout[f"{name}_offset"] = field.get(
+                            "offset"
+                        )
+                        expected_bridge_layout[f"{name}_size"] = field.get("size")
+            if any(
+                bridge_layout.get(key) != value
+                for key, value in expected_bridge_layout.items()
+            ):
+                reasons.append("bridge_source_layout_mismatch")
+
+    if reasons:
+        raise ValueError(
+            "saved evidence is not eligible for reassessment: "
+            + ", ".join(sorted(set(reasons)))
+        )
+
+
+def reassess_saved_report(path: Path) -> Dict[str, object]:
+    """Recompute derived findings from immutable raw frames and stage windows."""
+
+    source_path = path.resolve()
+    source_bytes = source_path.read_bytes()
+    source = json.loads(source_bytes)
+    if not isinstance(source, dict):
+        raise ValueError("saved Phase 2 evidence must be a JSON object")
+    _validate_reassessment_source(source)
+    raw_frames = source.get("raw_frames")
+    if not isinstance(raw_frames, list):
+        raise ValueError("saved Phase 2 evidence is missing raw_frames")
+
+    records: List[Tuple[Dict[str, object], RawTouchFrame]] = []
+    for index, item in enumerate(raw_frames):
+        if not isinstance(item, dict):
+            raise ValueError(f"raw_frames[{index}] must be an object")
+        collection_tag = item.get("collection_tag", {})
+        frame_value = item.get("frame")
+        if not isinstance(collection_tag, dict):
+            raise ValueError(f"raw_frames[{index}].collection_tag must be an object")
+        if not isinstance(frame_value, dict):
+            raise ValueError(f"raw_frames[{index}].frame must be an object")
+        records.append(
+            (dict(collection_tag), RawTouchFrame.from_dict(frame_value))
+        )
+
+    derived = _derive_capture_analysis(source, records)
+    return {
+        "schema_version": 1,
+        "phase": 2,
+        "experiment": "saved raw pressure candidate reassessment",
+        "reassessment_of": str(source_path),
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "reassessed_utc": _utc_now(),
+        "reassessment_basis": (
+            "original raw frames and original callback-time stage windows; no "
+            "private framework call and no recapture"
+        ),
+        "source_provenance_status": "accepted",
+        "source_completed": source.get("completed"),
+        "source_candidate_outcome": source.get("candidate_outcome"),
+        "target_profile_match": source.get("target_profile_match"),
+        "expected_phase2_source_layout": source.get(
+            "expected_phase2_source_layout"
+        ),
+        "requested_cycles": source.get("requested_cycles"),
+        "raw_frame_count": len(records),
+        "phase1_capture_stats": source.get("phase1_capture_stats"),
+        "phase2_capture_stats": source.get("phase2_capture_stats"),
+        "units": "raw sensor coordinates; not grams",
+        "calibration_performed": False,
+        "automatic_numeric_pass_threshold": None,
+        **derived,
+    }
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
+    if arguments.reanalyze_json is not None:
+        output = arguments.json_out or arguments.reanalyze_json.with_name(
+            f"{arguments.reanalyze_json.stem}-reassessed.json"
+        )
+        if output.resolve() == arguments.reanalyze_json.resolve():
+            parser.error("reassessment output must not overwrite its source evidence")
+        try:
+            report = reassess_saved_report(arguments.reanalyze_json)
+            _write_report(output, report)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            parser.error(str(error))
+        print("\nPhase 2 reassessed outcome:")
+        print(json.dumps(report["candidate_outcome"], indent=2, sort_keys=True))
+        print(f"Reassessment written to {output.resolve()}")
+        print("No private framework call, recapture, calibration, or grams conversion.")
+        return 0
     try:
         report = run(arguments)
         if arguments.json_out is not None:

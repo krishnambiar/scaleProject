@@ -1,4 +1,5 @@
 import json
+import math
 import struct
 import unittest
 
@@ -89,7 +90,7 @@ class Phase2AnalysisTests(unittest.TestCase):
         self.assertGreater(report.pressure_candidate.slope_per_second or 0, 0)
         self.assertIsNone(report.to_dict()["analysis_policy"]["automatic_numeric_pass_threshold"])
 
-    def test_excludes_transitions_extra_contacts_and_identity_replacement(self) -> None:
+    def test_excludes_transitions_extra_contacts_and_path_replacement(self) -> None:
         replacement = touch(22.0, path=9)
         report = analyze_phase2_stage(
             "medium",
@@ -105,7 +106,57 @@ class Phase2AnalysisTests(unittest.TestCase):
         self.assertEqual(report.primary_sample_count, 2)
         self.assertEqual(report.excluded_frame_counts["nonsteady_touch_state"], 1)
         self.assertEqual(report.excluded_frame_counts["multiple_contacts"], 1)
-        self.assertEqual(report.excluded_frame_counts["identity_change"], 1)
+        self.assertEqual(report.excluded_frame_counts["path_change"], 1)
+
+    def test_finger_classification_change_does_not_replace_single_contact(self) -> None:
+        report = analyze_phase2_stage(
+            "rest",
+            [
+                frame(1, touches=(touch(8.0, path=9, finger=2),)),
+                frame(2, touches=(touch(9.0, path=9, finger=7),)),
+                frame(3, touches=(touch(10.0, path=9, finger=2),)),
+            ],
+        )
+
+        self.assertEqual(report.primary_sample_count, 3)
+        self.assertEqual(report.selected_path_index, 9)
+        self.assertEqual(report.path_variation_frame_count, 0)
+        self.assertEqual(report.identity_code_variation_frame_count, 1)
+        self.assertNotIn("path_change", report.excluded_frame_counts)
+        sequence = summarize_pressure_sequence([("rest", report)])
+        self.assertEqual(sequence["categorical_disqualifiers"], [])
+        self.assertEqual(
+            sequence["identity_code_observations"][
+                "finger_or_hand_code_variation_frame_count"
+            ],
+            1,
+        )
+
+    def test_between_plateau_finger_code_change_is_descriptive_only(self) -> None:
+        rest = analyze_phase2_stage(
+            "rest", [frame(1, touches=(touch(10.0, path=9, finger=7),))]
+        )
+        light = analyze_phase2_stage(
+            "light", [frame(2, touches=(touch(20.0, path=9, finger=2),))]
+        )
+        result = summarize_pressure_sequence([("rest", rest), ("light", light)])
+
+        self.assertEqual(result["categorical_disqualifiers"], [])
+        self.assertTrue(result["strictly_increasing"])
+
+    def test_between_plateau_path_change_remains_disqualifying(self) -> None:
+        rest = analyze_phase2_stage(
+            "rest", [frame(1, touches=(touch(10.0, path=9),))]
+        )
+        light = analyze_phase2_stage(
+            "light", [frame(2, touches=(touch(20.0, path=11),))]
+        )
+        result = summarize_pressure_sequence([("rest", rest), ("light", light)])
+
+        self.assertIn(
+            "contact_path_changed_between_plateaus",
+            result["categorical_disqualifiers"],
+        )
 
     def test_fails_closed_on_profile_status_and_field_masks(self) -> None:
         report = analyze_phase2_stage(
@@ -165,6 +216,8 @@ class Phase2AnalysisTests(unittest.TestCase):
         encoded = json.dumps(raw.to_dict(), allow_nan=False)
         self.assertIn('"nan"', encoded)
         self.assertIn("NONFINITE_SCALAR", encoded)
+        restored = RawTouchFrame.from_dict(json.loads(encoded))
+        self.assertTrue(math.isnan(restored.touches[0].pressure_candidate))
 
     def test_unknown_decode_bits_are_named(self) -> None:
         self.assertEqual(

@@ -44,7 +44,7 @@
       "MTPathPrintCallback reads normalized position, zTotal, the force candidate, density, state, and identity fields from the listed offsets",
       "mt_FillMTContactDirectFromBinary and mt_FillMTContactDirectFromPrecise write the same scalar encodings to the listed offsets"
     ],
-    "behavioral_status": "candidate pressure field requires controlled rest/light/medium/harder/release validation",
+    "behavioral_status": "three controlled cycles show strictly increasing medians across operator-labelled REST/LIGHT/MEDIUM/HARDER stages; candidate for further validation, not independent proof of pressure, uncalibrated and not grams",
     "decoder_guards": {
       "allowed_state_range": {
         "minimum": 0,
@@ -68,13 +68,15 @@
     "Apple source typedef and width contract for the frame-number argument",
     "source typedef names for every verified Phase 2 record field",
     "meaning of every unselected byte in the 96-byte contact record",
-    "physical unit and force-response reliability of the pressure candidate",
+    "physical unit, calibrated response, and production measurement reliability of the pressure candidate",
     "semantics of MTDeviceStart option bits other than zero"
   ],
   "runtime_evidence": {
     "start_options_zero": "returned success in 25 Phase 1 and 10 opt-in Phase 2 ASan/UBSan start/stop cycles",
     "callback_pointer_interoperability": "verified by thousands of live callbacks",
     "phase2_unlabelled_smoke": "live one-contact records passed profile/frame/timestamp/scalar guards; not behavioral pressure evidence",
+    "phase2_controlled_pressure_trial": "three operator-labelled cycles produced strictly increasing REST/LIGHT/MEDIUM/HARDER medians (9/51/82/102, 14/57/90/131, 33/63/82/96) with clean ABI and queue accounting; advances the raw field for further validation but does not independently prove pressure semantics",
+    "identity_code_trial": "finger_id changed transiently while path_index, single-touch count, TOUCHING state, X/Y, and scalar streams remained continuous; path_index is used for continuity and finger_id/hand_id remain descriptive raw codes",
     "idle_behavior": "continuous idle frames are suppressed; releases produced terminal count-zero callbacks"
   },
   "evidence_method": "Local dyld shared-cache export inspection, arm64 disassembly, and target-Mac runtime diagnostics only; no third-party project source"

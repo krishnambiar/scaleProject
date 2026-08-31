@@ -21,8 +21,10 @@ checks, guarded synthetic tests, and local runtime experiments.
   layout fingerprint.
 - The guarded decoder, callback lifetime races, and 25 Phase 1 plus 10 Phase 2
   real start/stop cycles pass AddressSanitizer and UndefinedBehaviorSanitizer.
-- The pressure candidate is **not yet behaviorally accepted**. It still needs
-  the operator-guided rest/light/medium/harder/release experiment on this Mac.
+- A three-cycle operator-guided experiment produced strictly increasing
+  REST/LIGHT/MEDIUM/HARDER medians in every cycle. That observation advances
+  the raw field as a candidate for further validation on this Mac; it is not an
+  independent pressure reference and remains unsuitable for gram claims.
 
 All candidate values are raw sensor coordinates, not grams.
 
@@ -96,7 +98,7 @@ make stress
 tests under ASan/UBSan. `make stress` additionally performs real framework
 lifecycle cycles with Phase 2 enabled.
 
-## Run the Phase 2 experiment
+## Repeat the Phase 2 experiment
 
 From the repository root:
 
@@ -116,9 +118,22 @@ the native callback's monotonic timestamp rather than Python poll time.
 The JSON packet retains transitions, errored frames, exact float bit patterns,
 target/profile/layout evidence, queue accounting, operator event times, and raw
 frames. Plateau summaries use only clean, steady-state, single-contact samples
-with a stable identity. The report includes medians, quartiles, IQR, MAD,
-slopes, X/Y and contact-metric correlations, adjacent direction, overlap, and
-repeatability. It intentionally defines no numeric pass threshold.
+from one stable `path_index`. `finger_id` and `hand_id` remain descriptive raw
+classification codes: changing one does not invent a second contact when the
+verified touch count remains one. The report includes medians, quartiles, IQR,
+MAD, slopes, X/Y and contact-metric correlations, adjacent direction, overlap,
+and repeatability. It intentionally defines no numeric pass threshold.
+
+Saved evidence can be reassessed after an analysis-rule correction without
+loading the private framework or repeating the physical experiment:
+
+```bash
+PYTHONPATH=src python3 -m trackpad_scale.phase2_probe \
+  --reanalyze-json artifacts/phase2-pressure.json
+```
+
+The command writes a separate `*-reassessed.json` sidecar and records the source
+file's SHA-256; it refuses to overwrite the original raw evidence.
 
 Sentinel, non-finite, absent, zero-only, constant, ABI-integrity, incomplete,
 contact-confounded, and non-monotonic results stop before calibration. Even a

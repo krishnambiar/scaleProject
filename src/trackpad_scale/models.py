@@ -1,7 +1,7 @@
 import math
 from dataclasses import asdict, dataclass
 from enum import IntEnum, IntFlag
-from typing import Dict, Tuple, Union
+from typing import Dict, Mapping, Tuple, Union
 
 
 JsonFloat = Union[float, str]
@@ -82,6 +82,22 @@ def _json_float(value: float) -> JsonFloat:
     return "inf" if value > 0 else "-inf"
 
 
+def _float_from_json(value: object) -> float:
+    """Reverse the lossless non-finite encoding used by the evidence files."""
+
+    if isinstance(value, bool):
+        raise ValueError("boolean is not a valid floating-point value")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if value == "nan":
+        return float("nan")
+    if value == "inf":
+        return float("inf")
+    if value == "-inf":
+        return float("-inf")
+    raise ValueError(f"invalid JSON floating-point value: {value!r}")
+
+
 @dataclass(frozen=True)
 class FrameMetadata:
     """Application-owned Phase 1 metadata; it contains no touch-record data."""
@@ -96,6 +112,16 @@ class FrameMetadata:
         result = asdict(self)
         result["device_timestamp"] = _json_float(self.device_timestamp)
         return result
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "FrameMetadata":
+        return cls(
+            sequence=int(value["sequence"]),
+            raw_touch_count_register=int(value["raw_touch_count_register"]),
+            raw_frame_register=int(value["raw_frame_register"]),
+            device_timestamp=_float_from_json(value["device_timestamp"]),
+            host_monotonic_ns=int(value["host_monotonic_ns"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -158,6 +184,26 @@ class RawTouch:
             result["state_label"] = "UNRECOGNIZED"
         return result
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "RawTouch":
+        return cls(
+            copied_fields=int(value["copied_fields"]),
+            path_index=int(value["path_index"]),
+            state=int(value["state"]),
+            finger_id=int(value["finger_id"]),
+            hand_id=int(value["hand_id"]),
+            normalized_x=_float_from_json(value["normalized_x"]),
+            normalized_y=_float_from_json(value["normalized_y"]),
+            z_total=_float_from_json(value["z_total"]),
+            pressure_candidate=_float_from_json(value["pressure_candidate"]),
+            z_density=_float_from_json(value["z_density"]),
+            normalized_x_bits=int(value["normalized_x_bits"]),
+            normalized_y_bits=int(value["normalized_y_bits"]),
+            z_total_bits=int(value["z_total_bits"]),
+            pressure_candidate_bits=int(value["pressure_candidate_bits"]),
+            z_density_bits=int(value["z_density_bits"]),
+        )
+
 
 @dataclass(frozen=True)
 class RawTouchFrame:
@@ -178,6 +224,32 @@ class RawTouchFrame:
             "copied_touch_count": self.copied_touch_count,
             "touches": [touch.to_dict() for touch in self.touches],
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "RawTouchFrame":
+        metadata = value["metadata"]
+        touches = value["touches"]
+        if not isinstance(metadata, Mapping):
+            raise ValueError("frame metadata must be an object")
+        if not isinstance(touches, list):
+            raise ValueError("frame touches must be an array")
+        materialized = []
+        for touch in touches:
+            if not isinstance(touch, Mapping):
+                raise ValueError("each frame touch must be an object")
+            materialized.append(RawTouch.from_dict(touch))
+        copied_touch_count = int(value["copied_touch_count"])
+        if copied_touch_count != len(materialized):
+            raise ValueError(
+                "saved copied_touch_count does not match materialized touches"
+            )
+        return cls(
+            metadata=FrameMetadata.from_dict(metadata),
+            layout_profile_id=int(value["layout_profile_id"]),
+            decode_status=int(value["decode_status"]),
+            copied_touch_count=copied_touch_count,
+            touches=tuple(materialized),
+        )
 
 
 @dataclass(frozen=True)

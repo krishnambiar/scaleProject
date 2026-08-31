@@ -23,29 +23,54 @@
   the operator did not follow labelled pressure stages, the diagnostic correctly
   classified it as incomplete; those values are not monotonicity evidence.
 
-## Required before Phase 2 can be called behaviorally complete
+## Controlled physical result
 
-The user must perform the physical pressure experiment. From the repository
-root:
+The three-cycle physical experiment was completed on the checked-in target on
+2026-08-31. The original evidence is the local, git-ignored
+`artifacts/phase2-pressure.json` (SHA-256
+`370c03f642b71b2e4d99274f2f56ba84ce26de13aa5143b8a7c687220a7bf3d0`).
+
+An initial analysis incorrectly treated the full
+`(path_index, finger_id, hand_id)` tuple as a stable contact identity. In the
+raw data, `finger_id` briefly changed from `2` to `7` while `path_index`, touch
+count, state, X/Y, and the candidate stream remained continuous. The corrected
+`single-contact-path-continuity-v2` rule therefore:
+
+- uses `path_index` as the contact-track continuity key;
+- keeps `finger_id` and `hand_id` as descriptive raw classification codes;
+- still rejects actual multiple contacts, zero-contact interruptions,
+  nonsteady states, and path changes; and
+- includes same-path classification changes in the primary sample.
+
+Reassessment from the preserved raw frames produced these stage medians:
+
+| Cycle | REST | LIGHT | MEDIUM | HARDER | Direction |
+|---:|---:|---:|---:|---:|---|
+| 1 | 9 | 51 | 82 | 102 | strictly increasing |
+| 2 | 14 | 57 | 90 | 131 | strictly increasing |
+| 3 | 33 | 63 | 82 | 96 | strictly increasing |
+
+All 16,334 attempted frames materialized with no queue loss, ABI-integrity
+finding, non-finite scalar, or sentinel. All releases and no-contact baselines
+were confirmed, and all pressure plateaus retained one stable path. The
+automatic result is `human_review_required`, as designed; it never declares an
+automatic numeric pass.
+
+Human review advances the raw field as a candidate for further validation on
+this exact Mac because its medians followed every operator-labelled stage. The
+evidence is not an independent pressure reference or calibration: Cycle 2's
+HARDER range overlaps lower levels, REST drifts between cycles, and the current
+layout has no verified contact-area/shape field. Phase 2 therefore documents an
+ordered association in this trial, not pressure semantics, grams, accuracy, or
+production measurement quality.
+
+The original capture can be reassessed reproducibly without touching the
+private framework:
 
 ```bash
-make
 PYTHONPATH=src python3 -m trackpad_scale.phase2_probe \
-  --cycles 3 \
-  --json-out artifacts/phase2-pressure.json
+  --reanalyze-json artifacts/phase2-pressure.json
 ```
-
-For each prompt:
-
-1. use exactly one fingertip;
-2. keep the same fingertip and location from REST through HARDER;
-3. press Return to begin changing the pose;
-4. press Return again only after the requested pose is steady; and
-5. release fully during RELEASE.
-
-The callback collector runs while prompts are visible. Post-capture stage
-membership uses the callback's native monotonic timestamp and recorded operator
-boundaries, not delayed Python poll time.
 
 ## Evidence the report provides
 
@@ -58,15 +83,18 @@ queue accounting.
 
 There is no invented numeric pass threshold. Hard reason codes reject an ABI
 mismatch, sentinel, non-finite, absent, zero-only, or constant field. Missing
-stages or release evidence, extra contacts, contact interruption, identity/state
+stages or release evidence, extra contacts, contact interruption, path/state
 changes, ties, direction changes, or inconsistent cycle direction produce an
-inconclusive result. Adjacent raw-range overlap is reported descriptively rather
-than treated as an invented zero-overlap threshold. A clean ordinal result
-still requires human review of X/Y and available geometry indicators.
+inconclusive result. `finger_id` and `hand_id` variation is reported but does not
+override a verified single touch on a continuous path. Adjacent raw-range
+overlap is reported descriptively rather than treated as an invented
+zero-overlap threshold. A clean ordinal result still requires human review of
+X/Y and available geometry indicators.
 
 ## Explicit stopping point
 
 This phase does not tare, stabilize, calibrate, convert to grams, infer bottle
 weight, or generate hydration events. All values remain raw sensor coordinates,
-not grams. Phase 3 or later work must wait until the physical report supports
-the pressure candidate and the remaining confounds are documented.
+not grams. Phase 2 stops with the raw field advanced for further validation and
+the remaining drift/geometry confounds documented; no Phase 3 work is included
+here.

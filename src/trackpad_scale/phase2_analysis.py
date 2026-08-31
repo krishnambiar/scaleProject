@@ -57,7 +57,9 @@ class Phase2StageReport:
     host_monotonic_regressing_steps: int
     primary_sample_count: int
     excluded_frame_counts: Dict[str, int]
-    selected_identity: Optional[Dict[str, int]]
+    selected_path_index: Optional[int]
+    path_variation_frame_count: int
+    identity_code_variation_frame_count: int
     identity_histogram: Dict[str, int]
     state_histogram: Dict[str, int]
     pressure_candidate: ScalarSummary
@@ -73,7 +75,12 @@ class Phase2StageReport:
             "primary_sample": (
                 "decode_status zero; required fields present; raw, copied, and "
                 "materialized counts all equal one; finite nonsentinel scalars; "
-                "modal contact identity for this plateau"
+                "steady touching state"
+            ),
+            "identity_policy": (
+                "path_index is the continuity key; finger_id and hand_id are "
+                "reported as raw classification codes and are not interpreted "
+                "as extra contacts"
             ),
             "pressure_units": "arbitrary raw sensor coordinate; not grams",
             "quartile_method": "linear interpolation at index (n - 1) * p",
@@ -260,19 +267,35 @@ def analyze_phase2_stage(
             continue
         eligible.append((frame, touch))
 
-    identity_counts = Counter(_identity(touch) for _, touch in eligible)
-    selected_identity: Optional[Tuple[int, int, int]] = None
-    if identity_counts:
-        selected_identity = min(
-            identity_counts,
-            key=lambda item: (-identity_counts[item], item),
+    path_counts = Counter(touch.path_index for _, touch in eligible)
+    selected_path_index: Optional[int] = None
+    if path_counts:
+        selected_path_index = min(
+            path_counts,
+            key=lambda item: (-path_counts[item], item),
         )
     primary: List[Tuple[RawTouchFrame, RawTouch]] = []
     for pair in eligible:
-        if _identity(pair[1]) != selected_identity:
-            exclusions["identity_change"] += 1
+        if pair[1].path_index != selected_path_index:
+            exclusions["path_change"] += 1
         else:
             primary.append(pair)
+
+    identity_counts = Counter(_identity(touch) for _, touch in eligible)
+    classification_counts = Counter(
+        (touch.finger_id, touch.hand_id) for _, touch in primary
+    )
+    modal_classification_code: Optional[Tuple[int, int]] = None
+    if classification_counts:
+        modal_classification_code = min(
+            classification_counts,
+            key=lambda item: (-classification_counts[item], item),
+        )
+    identity_code_variation_frame_count = sum(
+        count
+        for code, count in classification_counts.items()
+        if code != modal_classification_code
+    )
 
     times = [frame.metadata.host_monotonic_ns for frame, _ in primary]
     touches = [touch for _, touch in primary]
@@ -281,14 +304,6 @@ def analyze_phase2_stage(
     z_density = [touch.z_density for touch in touches]
     x_values = [touch.normalized_x for touch in touches]
     y_values = [touch.normalized_y for touch in touches]
-
-    selected_identity_dict = None
-    if selected_identity is not None:
-        selected_identity_dict = {
-            "path_index": selected_identity[0],
-            "finger_id": selected_identity[1],
-            "hand_id": selected_identity[2],
-        }
 
     identity_histogram = {
         f"path={key[0]},finger={key[1]},hand={key[2]}": count
@@ -315,7 +330,11 @@ def analyze_phase2_stage(
         ),
         primary_sample_count=len(primary),
         excluded_frame_counts=_counter_dict(exclusions),
-        selected_identity=selected_identity_dict,
+        selected_path_index=selected_path_index,
+        path_variation_frame_count=exclusions.get("path_change", 0),
+        identity_code_variation_frame_count=(
+            identity_code_variation_frame_count
+        ),
         identity_histogram=identity_histogram,
         state_histogram=_counter_dict(observed_states),
         pressure_candidate=_scalar_summary(
@@ -354,7 +373,8 @@ def summarize_pressure_sequence(
     all_stage_medians: List[float] = []
     total_distinct_patterns = set()
     structural_error_frames = 0
-    identities = []
+    selected_path_indexes = []
+    identity_code_variation_frame_count = 0
 
     for label, report in ordered_stages:
         if report.primary_sample_count == 0:
@@ -363,14 +383,11 @@ def summarize_pressure_sequence(
             value = report.pressure_candidate.median
             if value is not None:
                 all_stage_medians.append(value)
-        if report.selected_identity is not None:
-            identities.append(
-                (
-                    report.selected_identity["path_index"],
-                    report.selected_identity["finger_id"],
-                    report.selected_identity["hand_id"],
-                )
-            )
+        if report.selected_path_index is not None:
+            selected_path_indexes.append(report.selected_path_index)
+        identity_code_variation_frame_count += (
+            report.identity_code_variation_frame_count
+        )
         structural_error_frames += report.excluded_frame_counts.get(
             "decode_status_nonzero", 0
         )
@@ -389,8 +406,8 @@ def summarize_pressure_sequence(
             disqualifiers.append(f"{label}:nonfinite_scalar")
         if report.excluded_frame_counts.get("multiple_contacts", 0):
             disqualifiers.append(f"{label}:multiple_contact_confound")
-        if report.excluded_frame_counts.get("identity_change", 0):
-            disqualifiers.append(f"{label}:identity_change")
+        if report.excluded_frame_counts.get("path_change", 0):
+            disqualifiers.append(f"{label}:path_change")
         if report.excluded_frame_counts.get("nonsteady_touch_state", 0):
             disqualifiers.append(f"{label}:nonsteady_touch_state")
         # Stage summaries expose only a count, not the actual patterns. A
@@ -444,8 +461,8 @@ def summarize_pressure_sequence(
 
     if structural_error_frames:
         disqualifiers.append("nonzero_decode_status_observed")
-    if len(set(identities)) > 1:
-        disqualifiers.append("contact_identity_changed_between_plateaus")
+    if len(set(selected_path_indexes)) > 1:
+        disqualifiers.append("contact_path_changed_between_plateaus")
     if all_stage_medians and all(value == 0 for value in all_stage_medians):
         disqualifiers.append("pressure_candidate_zero_only")
     if len(all_stage_medians) >= 2 and len(set(all_stage_medians)) == 1:
@@ -474,6 +491,15 @@ def summarize_pressure_sequence(
         and all(item == "decrease" for item in available_directions),
         "weakly_decreasing": bool(available_directions)
         and all(item in ("decrease", "tie") for item in available_directions),
+        "identity_code_observations": {
+            "finger_or_hand_code_variation_frame_count": (
+                identity_code_variation_frame_count
+            ),
+            "interpretation": (
+                "finger_id and hand_id variation is descriptive only; those "
+                "raw codes are not used to infer contact multiplicity"
+            ),
+        },
         "categorical_disqualifiers": sorted(set(disqualifiers)),
         "automatic_numeric_pass_threshold": None,
         "interpretation": (

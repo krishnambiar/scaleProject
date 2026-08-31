@@ -133,11 +133,13 @@ entire frame decode status is zero.
 - Apple's source typedef names for callback and record fields.
 - The meaning of every unselected byte in the 96-byte record.
 - A verified contact-area/shape field.
-- The physical unit, direction, ordinal reliability, hysteresis, drift, and
-  geometry sensitivity of the `0x34` candidate.
+- The physical unit, calibrated response, long-run ordinal reliability,
+  hysteresis, drift, and geometry sensitivity of the `0x34` candidate. Three
+  controlled cycles observed increasing medians across operator-labelled
+  stages on this target, but did not independently verify pressure or resolve
+  those remaining properties.
 - Compatibility with any other hardware, OS build, framework version, image
   UUID, architecture, or nonzero `MTDeviceStart` option.
 
-The operator-guided Phase 2 experiment exists to resolve the pressure
-candidate's behavioral questions. Calibration must not begin before that
-evidence is reviewed.
+The operator-guided Phase 2 evidence advances the raw field as a candidate for
+further validation only. It does not authorize calibration or gram conversion.

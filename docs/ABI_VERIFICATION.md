@@ -66,8 +66,10 @@ The dispatch dataflow also shows that active contact counts are bounded at 32 an
 - Apple's source typedef and promised width for the frame argument.
 - Callback rate and frame-ID continuity under 0/1/multiple physical contacts.
 - Every unselected touch-record byte and all Apple private source typedef names.
-- The physical behavior, unit, drift, and geometry sensitivity of the Phase 2
-  pressure candidate. The selected exact-target byte layout is documented in
+- The Phase 2 candidate's physical unit, calibrated response, long-run drift,
+  hysteresis, and geometry sensitivity. Three controlled cycles observed that
+  its medians increased across operator-labelled stages on this exact target;
+  the selected byte layout is documented in
   [PHASE2_ABI_VERIFICATION.md](PHASE2_ABI_VERIFICATION.md).
 - Every `MTDeviceStart` option bit other than zero.
 
