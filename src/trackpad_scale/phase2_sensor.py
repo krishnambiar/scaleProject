@@ -10,6 +10,7 @@ from typing import Dict, Optional
 
 from .models import CaptureStats, Phase2CaptureStats, RawTouchFrame
 from .native_bridge import NativePhase2Capture
+from .sensor import _validate_timeout
 
 
 class TouchDiagnosticSensor:
@@ -27,10 +28,17 @@ class TouchDiagnosticSensor:
         self._native.stop()
 
     def read_frame(self, timeout: Optional[float] = None) -> Optional[RawTouchFrame]:
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must be non-negative or None")
+        _validate_timeout(timeout)
         deadline = None if timeout is None else time.monotonic() + timeout
+        first_poll = True
         while True:
+            if (
+                not first_poll
+                and deadline is not None
+                and time.monotonic() >= deadline
+            ):
+                return None
+            first_poll = False
             frame = self._native.poll_touch_frame()
             if frame is not None:
                 # The legacy Phase 1 queue remains additive and receives the
@@ -40,11 +48,13 @@ class TouchDiagnosticSensor:
                 return frame
             if not self.is_running():
                 return None
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is None:
+                time.sleep(0.001)
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return None
-            if timeout == 0:
-                return None
-            time.sleep(0.001)
+            time.sleep(min(0.001, remaining))
 
     def drain_phase1_metadata(self) -> None:
         while self._native.poll() is not None:

@@ -1,10 +1,16 @@
 """Phase 1 sensor facade; future hydration code can depend on this boundary."""
 
+import math
 import time
 from typing import Optional
 
 from .models import CaptureStats, FrameMetadata
 from .native_bridge import NativePhase1Capture
+
+
+def _validate_timeout(timeout: Optional[float]) -> None:
+    if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
+        raise ValueError("timeout must be finite and non-negative, or None")
 
 
 class TrackpadSensor:
@@ -24,20 +30,29 @@ class TrackpadSensor:
         self._native.stop()
 
     def read_frame(self, timeout: Optional[float] = None) -> Optional[FrameMetadata]:
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must be non-negative or None")
+        _validate_timeout(timeout)
         deadline = None if timeout is None else time.monotonic() + timeout
+        first_poll = True
         while True:
+            if (
+                not first_poll
+                and deadline is not None
+                and time.monotonic() >= deadline
+            ):
+                return None
+            first_poll = False
             frame = self._native.poll()
             if frame is not None:
                 return frame
             if not self.is_running():
                 return None
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is None:
+                time.sleep(0.001)
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return None
-            if timeout == 0:
-                return None
-            time.sleep(0.001)
+            time.sleep(min(0.001, remaining))
 
     def drain(self) -> None:
         self._native.drain()

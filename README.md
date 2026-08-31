@@ -1,8 +1,9 @@
 # Clean-room MacBook trackpad scale diagnostics
 
-This repository has a verified Phase 1 transport and an exact-target Phase 2
-pressure diagnostic. Phase 2 deliberately stops at an uncalibrated raw
-candidate: it does not implement tare, smoothing, grams, bottle logic, or
+This repository has a verified Phase 1 transport, an exact-target Phase 2
+pressure diagnostic, and a Phase 3 application boundary for immutable raw
+frames. The pressure candidate remains an uncalibrated sensor coordinate: the
+project does not yet implement tare, smoothing, grams, bottle logic, or
 hydration behavior.
 
 No TrackWeight or OpenMultitouchSupport source was searched, inspected, copied,
@@ -25,6 +26,17 @@ checks, guarded synthetic tests, and local runtime experiments.
   REST/LIGHT/MEDIUM/HARDER medians in every cycle. That observation advances
   the raw field as a candidate for further validation on this Mac; it is not an
   independent pressure reference and remains unsuitable for gram claims.
+- Phase 3 validates each copied transport record and returns a private-ABI-free
+  `RawFrame` to application code. Invalid decode status, profile/count/mask
+  disagreement, invalid state, sentinel/non-finite data, or changed binary32
+  bits fail closed.
+- Deterministic sanitizer tests prove both native queues are bounded, preserve
+  FIFO order for sequentially injected callbacks, drop the oldest records at
+  capacity, never block on queue-lock contention, and safely copy a 32-contact
+  frame.
+- An exact-target live check returned a two-contact application `RawFrame`, then
+  stopped and closed with balanced accounting and zero drops or ABI findings;
+  the immutable frame remained readable after native teardown.
 
 All candidate values are raw sensor coordinates, not grams.
 
@@ -51,14 +63,41 @@ native/include/mt_phase2.h (project-owned additive ABI)
 NativePhase2Capture -> TouchDiagnosticSensor
                     |
                     v
+Phase 3 integrity gate -> RawFrameSensor -> immutable RawFrame
+                    |
+                    v
 phase2_probe + phase2_analysis (diagnostic only)
 
-Future hydration application: intentionally not implemented
+Future hydration policy/calibration: intentionally not implemented
 ```
 
 The native callback copies selected values before returning. Python sees only
 immutable project-owned snapshots. Phase 2 has its own bounded queue, while the
-legacy Phase 1 ABI and queue remain unchanged.
+legacy Phase 1 ABI and queue remain unchanged. The metadata queue holds 4,096
+frames and the rich-frame queue holds 1,024. A full queue discards its oldest
+record. If the shared queue mutex is momentarily unavailable, the callback
+returns immediately and counts the incoming record as a contention drop; it
+never waits for Python.
+
+Application code should depend on `RawFrameSensor`, not the private framework
+or the diagnostic transport model:
+
+```python
+from trackpad_scale import RawFrameSensor
+
+with RawFrameSensor() as sensor:
+    sensor.start()
+    frame = sensor.read_frame(timeout=2.0)
+    sensor.stop()
+
+if frame is not None:
+    for contact in frame.contacts:
+        print(contact.path_index, contact.pressure_candidate_raw)
+```
+
+`pressure_candidate_raw`, `z_total_raw`, and `z_density_raw` have arbitrary raw
+sensor units. The API performs no baseline subtraction, selection, aggregation,
+filtering, stabilization, calibration, or unit conversion.
 
 ## Exact-target source layout
 
@@ -154,9 +193,13 @@ confounds.
 - **Bit-preserving diagnostics:** each binary32 value keeps its exact source
   bits, allowing constant/sentinel evidence to be distinguished from display
   formatting.
+- **Narrow application contract:** the Phase 3 conversion gate strips target
+  profile/layout details from application frames while rechecking all transport
+  integrity invariants. Diagnostic failures remain explicit exceptions.
 - **No premature physical meaning:** `zTotal`, `zDensity`, and the pressure
   candidate are raw coordinates. Phase 2 cannot output grams.
 
 See [docs/ABI_VERIFICATION.md](docs/ABI_VERIFICATION.md),
 [docs/PHASE2_ABI_VERIFICATION.md](docs/PHASE2_ABI_VERIFICATION.md), and
-[docs/PHASE2_STATUS.md](docs/PHASE2_STATUS.md).
+[docs/PHASE2_STATUS.md](docs/PHASE2_STATUS.md), and
+[docs/PHASE3_STATUS.md](docs/PHASE3_STATUS.md).

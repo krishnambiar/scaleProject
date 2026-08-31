@@ -253,6 +253,45 @@ class RawTouchFrame:
 
 
 @dataclass(frozen=True)
+class RawContact:
+    """Phase 3 application contact in uncalibrated sensor coordinates.
+
+    ``pressure_candidate_raw`` has no claimed physical unit.  The finger and
+    hand values are descriptive codes, not contact-continuity identifiers.
+    """
+
+    path_index: int
+    state: int
+    finger_code: int
+    hand_code: int
+    normalized_x: float
+    normalized_y: float
+    z_total_raw: float
+    pressure_candidate_raw: float
+    z_density_raw: float
+    normalized_x_bits: int
+    normalized_y_bits: int
+    z_total_bits: int
+    pressure_candidate_bits: int
+    z_density_bits: int
+
+
+@dataclass(frozen=True)
+class RawFrame:
+    """Private-ABI-free Phase 3 frame consumed by application code."""
+
+    sequence: int
+    frame_number: int
+    device_timestamp: float
+    host_monotonic_ns: int
+    contacts: Tuple[RawContact, ...]
+
+    @property
+    def touch_count(self) -> int:
+        return len(self.contacts)
+
+
+@dataclass(frozen=True)
 class Phase2CaptureStats:
     attempted_frame_count: int
     copied_touch_count: int

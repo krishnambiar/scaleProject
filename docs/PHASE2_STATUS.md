@@ -96,5 +96,5 @@ X/Y and available geometry indicators.
 This phase does not tare, stabilize, calibrate, convert to grams, infer bottle
 weight, or generate hydration events. All values remain raw sensor coordinates,
 not grams. Phase 2 stops with the raw field advanced for further validation and
-the remaining drift/geometry confounds documented; no Phase 3 work is included
-here.
+the remaining drift/geometry confounds documented. The later Phase 3 transport
+boundary does not change or reinterpret this Phase 2 result.
