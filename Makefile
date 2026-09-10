@@ -18,7 +18,7 @@ GATE_STRESS_BINARY := $(BUILD_DIR)/phase1_callback_gate_stress
 PHASE2_TEST_SOURCE := native/tests/phase2_decode_test.c
 PHASE2_TEST_BINARY := $(BUILD_DIR)/phase2_decode_test
 
-.PHONY: all clean test stress probe phase2-probe
+.PHONY: all clean test stress probe phase2-probe phase4-probe phase4-replay
 
 all: $(LIBRARY)
 
@@ -75,6 +75,14 @@ probe: $(LIBRARY)
 phase2-probe: $(LIBRARY)
 	PYTHONPATH=src python3 -m trackpad_scale.phase2_probe \
 		--cycles 3 --json-out artifacts/phase2-pressure.json
+
+phase4-probe: $(LIBRARY)
+	PYTHONPATH=src python3 -m trackpad_scale.phase4_probe \
+		--json-out artifacts/phase4-live.json
+
+phase4-replay:
+	PYTHONPATH=src python3 -m trackpad_scale.phase4_replay \
+		--source artifacts/phase2-pressure.json
 
 clean:
 	rm -f $(LIBRARY) $(STRESS_BINARY) $(GATE_STRESS_BINARY) $(PHASE2_TEST_BINARY)

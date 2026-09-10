@@ -1,10 +1,12 @@
 # Clean-room MacBook trackpad scale diagnostics
 
 This repository has a verified Phase 1 transport, an exact-target Phase 2
-pressure diagnostic, and a Phase 3 application boundary for immutable raw
-frames. The pressure candidate remains an uncalibrated sensor coordinate: the
-project does not yet implement tare, smoothing, grams, bottle logic, or
-hydration behavior.
+pressure diagnostic, a Phase 3 application boundary for immutable raw frames,
+and an experimental Phase 4 tare/filter/stability engine. The pressure
+candidate remains an uncalibrated sensor coordinate. Phase 4 is implemented
+for replay and live tuning, but its thresholds are not yet accepted for
+measurement use; the project does not implement grams, calibration, bottle
+logic, or hydration behavior.
 
 No TrackWeight or OpenMultitouchSupport source was searched, inspected, copied,
 translated, or reproduced. The ABI evidence comes from the project
@@ -37,6 +39,14 @@ checks, guarded synthetic tests, and local runtime experiments.
 - An exact-target live check returned a two-contact application `RawFrame`, then
   stopped and closed with balanced accounting and zero drops or ABI findings;
   the immutable frame remained readable after native teardown.
+- Phase 4 now performs an explicit reference-contact tare, freezes its robust
+  median baseline, rejects unsupported continuity and transient states, applies
+  median plus moving-average filtering, and requires repeated time-separated
+  low-MAD/low-slope windows before publishing a raw pressure delta.
+- Phase 4 has no built-in production defaults. Its packaged exact-target
+  profile is immutable and explicitly `experimental_unvalidated`; every value
+  is tied to the preserved Phase 2 capture and must be challenged by repeated
+  live trials before acceptance.
 
 All candidate values are raw sensor coordinates, not grams.
 
@@ -66,9 +76,14 @@ NativePhase2Capture -> TouchDiagnosticSensor
 Phase 3 integrity gate -> RawFrameSensor -> immutable RawFrame
                     |
                     v
-phase2_probe + phase2_analysis (diagnostic only)
+PressureStabilizer (pure Python, private-ABI-free)
+  explicit frozen tare -> transient gate -> median -> moving average
+  -> rolling MAD/slope -> repeated stable-window confirmation
+                    |
+                    v
+phase4_probe / phase4_replay (experimental diagnostics)
 
-Future hydration policy/calibration: intentionally not implemented
+Phase 5 calibration and future hydration policy: intentionally not implemented
 ```
 
 The native callback copies selected values before returning. Python sees only
@@ -96,8 +111,32 @@ if frame is not None:
 ```
 
 `pressure_candidate_raw`, `z_total_raw`, and `z_density_raw` have arbitrary raw
-sensor units. The API performs no baseline subtraction, selection, aggregation,
-filtering, stabilization, calibration, or unit conversion.
+sensor units. `RawFrameSensor` performs no baseline subtraction, selection,
+aggregation, filtering, stabilization, calibration, or unit conversion. The
+separate `PressureStabilizer` consumes only these application-owned models, so
+none of the private framework or diagnostic transport types leak into the
+signal-processing layer.
+
+The stabilizer requires every threshold explicitly. For the one exact-target
+experiment profile:
+
+```python
+from trackpad_scale import PressureStabilizer
+from trackpad_scale.phase4_profile import load_experimental_phase4_profile
+
+profile = load_experimental_phase4_profile()
+stabilizer = PressureStabilizer(profile.config)
+```
+
+Call `tare()` with a finite continuous window containing exactly one
+`TOUCHING` path. A release, extra contact, path replacement, excessive position
+change, or frame/time gap invalidates that tare and requires an explicit new
+one. `restart_stability_search()` clears transition/filter history while
+preserving the frozen baseline and stream-continuity checks. `process()` returns
+an auditable status for every frame; `ingest()` returns a
+`StablePressureMeasurement` only after the configured confirmation windows
+agree. Negative deltas remain negative, and the baseline never adapts to hide
+drift.
 
 ## Exact-target source layout
 
@@ -179,6 +218,31 @@ contact-confounded, and non-monotonic results stop before calibration. Even a
 clean ordinal result remains subject to human review for movement/geometry
 confounds.
 
+## Exercise Phase 4
+
+Replay the exact preserved Phase 2 evidence without loading the private
+framework:
+
+```bash
+PYTHONPATH=src python3 -m trackpad_scale.phase4_replay \
+  --source artifacts/phase2-pressure.json \
+  --json-out artifacts/phase4-replay.json
+```
+
+Run one operator-guided live raw-domain trial on the checked-in target:
+
+```bash
+make phase4-probe
+```
+
+The live probe first freezes a same-contact resting-pressure tare, processes a
+light-pressure transition without hiding any frames, explicitly restarts only
+the stability/filter search, and then records a separate steady interval. It
+writes the raw frames and decisions needed for reassessment. A single
+publication is not Phase 4 acceptance: repeated baseline, steady-hold,
+transition, jostle, movement, contact-loss, and cross-session trials still need
+to establish or reject the exploratory thresholds.
+
 ## Why the design is defensible
 
 - **Exact target, not folklore:** hardware, both OS build identities, framework
@@ -197,9 +261,11 @@ confounds.
   profile/layout details from application frames while rechecking all transport
   integrity invariants. Diagnostic failures remain explicit exceptions.
 - **No premature physical meaning:** `zTotal`, `zDensity`, and the pressure
-  candidate are raw coordinates. Phase 2 cannot output grams.
+  candidate are raw coordinates. Phase 4 cannot output grams or a calibration
+  model.
 
 See [docs/ABI_VERIFICATION.md](docs/ABI_VERIFICATION.md),
 [docs/PHASE2_ABI_VERIFICATION.md](docs/PHASE2_ABI_VERIFICATION.md), and
 [docs/PHASE2_STATUS.md](docs/PHASE2_STATUS.md), and
-[docs/PHASE3_STATUS.md](docs/PHASE3_STATUS.md).
+[docs/PHASE3_STATUS.md](docs/PHASE3_STATUS.md), and
+[docs/PHASE4_STATUS.md](docs/PHASE4_STATUS.md).

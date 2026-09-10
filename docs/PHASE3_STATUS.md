@@ -147,6 +147,8 @@ architecture, device capability, profile, or start option fails closed.
 
 ## Stopping point
 
-Phase 3 stops at validated transport of raw frames. REST drift, range overlap,
-hysteresis, geometry sensitivity, physical units, calibration, and production
-measurement quality remain unresolved. Phase 4 has not been implemented.
+Phase 3 stops at validated transport of raw frames. The separate Phase 4 layer
+now experiments with tare, filtering, and stability over this boundary, but it
+does not change Phase 3's contract or validate the candidate physically. REST
+drift, range overlap, hysteresis, geometry sensitivity, physical units,
+calibration, and production measurement quality remain unresolved here.

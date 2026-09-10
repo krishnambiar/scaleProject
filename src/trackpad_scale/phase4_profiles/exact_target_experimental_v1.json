@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "profile_id": "mac16_8-macos_25D771280a-mts_9430_5-uuid_40D691BB916631E0959E351863FF09A0-phase4-experimental-v1",
+  "status": "experimental_unvalidated",
+  "scope": "exact_target_only",
+  "units": "arbitrary raw sensor coordinate; not grams",
+  "calibration_performed": false,
+  "source_phase2_artifact": {
+    "sha256": "370c03f642b71b2e4d99274f2f56ba84ce26de13aa5143b8a7c687220a7bf3d0",
+    "target": {
+      "architecture": "arm64",
+      "framework_bundle_version": "9430.5",
+      "framework_image_uuid": "40D691BB-9166-31E0-959E-351863FF09A0",
+      "hardware_model": "Mac16,8",
+      "kernel_osversion": "25D2128",
+      "os_build": "25D771280a"
+    },
+    "replay": {
+      "tare_cycle": 1,
+      "tare_stage": "rest",
+      "tare_period": "settled",
+      "tare_trailing_sample_count": 123,
+      "tare_first_sequence": 1351,
+      "tare_last_sequence": 1473,
+      "tare_first_frame_number": 1467,
+      "tare_last_frame_number": 1589,
+      "continuation_first_sequence": 1474,
+      "continuation_last_sequence": 2892,
+      "pressure_cycle": 1,
+      "pressure_stage": "light",
+      "pressure_period": "settled",
+      "pressure_first_sequence": 2401,
+      "pressure_last_sequence": 2892,
+      "expected_tare_baseline_raw": 10.0,
+      "expected_tare_mad_raw": 0.0,
+      "expected_tare_max_absolute_deviation_raw": 0.0,
+      "expected_tare_slope_raw_per_second": 0.0,
+      "expected_publication_sequence": 2459,
+      "expected_publication_frame_number": 2575,
+      "expected_published_delta_raw": 45.5
+    }
+  },
+  "config": {
+    "tare_window_samples": 123,
+    "tare_min_duration_seconds": 0.95,
+    "tare_max_mad_raw": 3.0,
+    "tare_max_absolute_deviation_raw": 3.0,
+    "tare_max_abs_slope_raw_per_second": 3.0,
+    "median_window_samples": 31,
+    "smoothing_window_samples": 5,
+    "outlier_window_samples": 31,
+    "outlier_mad_multiplier": 3.0,
+    "outlier_floor_raw": 12.0,
+    "stability_window_seconds": 0.75,
+    "stability_min_samples": 90,
+    "stability_max_mad_raw": 3.0,
+    "stability_max_abs_slope_raw_per_second": 3.0,
+    "stable_window_interval_seconds": 0.75,
+    "stable_windows_required": 2,
+    "stable_window_agreement_raw": 3.0,
+    "max_sample_gap_seconds": 0.02,
+    "maximum_tare_age_seconds": 15.0,
+    "max_position_deviation_normalized": 0.01
+  },
+  "rationale": [
+    "The preserved exact-target capture delivered settled frames at about 122.9 Hz; 123 tare samples span 0.992482 seconds and 31 median samples span about 0.25 seconds.",
+    "The selected Cycle 1 REST tail has baseline 10 raw units, MAD 0, maximum absolute deviation 0, and OLS slope 0 raw units per second.",
+    "The requested five-sample moving average and 3 raw-unit slope limits publish during the continuous Cycle 1 REST-to-LIGHT replay without relaxing those limits.",
+    "A 0.75-second stability window with at least 90 samples and two 0.75-second-separated confirmations fits the observed sampling rate while preserving time separation.",
+    "The 0.02-second gap limit exceeds the selected replay's 0.009877-second maximum gap; the 0.01 position limit exceeds its 0.00759921 maximum normalized displacement.",
+    "The 12 raw-unit outlier floor exceeds the largest observed current-versus-prior-31-sample-median deviation in non-caveat settled windows, while the Cycle 2 HARDER excursion reached 68 by that diagnostic."
+  ],
+  "caveats": [
+    "This profile is exploratory, unvalidated, and restricted to the exact hardware, operating-system, and framework image recorded above.",
+    "The pressure candidate remains an arbitrary raw sensor coordinate; no calibration was performed and no value is a mass or force measurement.",
+    "The evidence contains one operator, one device, one capture, and manually confirmed stage boundaries, so none of these thresholds is a production acceptance limit.",
+    "Cycle 3 REST drifted from a first-half-second median of 49 to a last-half-second median of 14; manual settled confirmation did not establish numerical stability.",
+    "Cycle 2 HARDER contains a sustained 50-frame, approximately 0.399-second excursion below the Cycle 2 MEDIUM range, so its range overlap must not be hidden as an isolated outlier.",
+    "The expected Cycle 1 LIGHT publication occurs only about 0.472 seconds into the labelled settled window, and its stability history includes transition samples; 45.5 raw units is a local stable delta, not the full-stage delta or a calibrated quantity.",
+    "The 15-second tare lifetime and all numeric limits exist to make this preserved replay falsifiable; they do not establish long-term drift behavior or transfer to another target."
+  ]
+}

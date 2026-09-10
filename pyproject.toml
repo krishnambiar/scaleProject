@@ -11,6 +11,8 @@ requires-python = ">=3.9"
 [project.scripts]
 trackpad-phase1 = "trackpad_scale.phase1_probe:main"
 trackpad-phase2 = "trackpad_scale.phase2_probe:main"
+trackpad-phase4 = "trackpad_scale.phase4_probe:main"
+trackpad-phase4-replay = "trackpad_scale.phase4_replay:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -19,4 +21,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-trackpad_scale = ["abi_profiles/*.json"]
+trackpad_scale = ["abi_profiles/*.json", "phase4_profiles/*.json"]
