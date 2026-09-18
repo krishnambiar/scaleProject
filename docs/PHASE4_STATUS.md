@@ -16,7 +16,8 @@ of their saved raw evidence.
 
 Every result remains an arbitrary raw pressure-domain coordinate. Phase 4 does
 not calibrate, convert to grams, infer force or mass, weigh a bottle, or create
-hydration events. Phase 5 has not started.
+hydration events. Phase 5 now has a separate candidate-fit workflow, but no
+known-mass or bottle-weight validation has been performed.
 
 ## Boundary and data flow
 
@@ -312,4 +313,5 @@ module; they do not validate Phase 4 measurement quality.
   safety-critical use is claimed.
 
 Phase 4 stops here until repeated live evidence supports accepting or revising
-the exploratory profile. Calibration and all Phase 5 work remain out of scope.
+the exploratory profile. Phase 5 software cannot use this unvalidated profile
+to claim a physical calibration; see `docs/PHASE5_STATUS.md`.

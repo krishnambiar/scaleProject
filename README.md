@@ -2,11 +2,11 @@
 
 This repository has a verified Phase 1 transport, an exact-target Phase 2
 pressure diagnostic, a Phase 3 application boundary for immutable raw frames,
-and an experimental Phase 4 tare/filter/stability engine. The pressure
-candidate remains an uncalibrated sensor coordinate. Phase 4 is implemented
-for replay and live tuning, but its thresholds are not yet accepted for
-measurement use; the project does not implement grams, calibration, bottle
-logic, or hydration behavior.
+and an experimental Phase 4 tare/filter/stability engine. Phase 5 now has a
+separate known-mass evidence gate and calibration assessment workflow, but no
+physical calibration has been performed: the project has no completed live
+Phase 4 trial or known-mass data. It does not publish validated bottle weight,
+public grams, or hydration behavior.
 
 No TrackWeight or OpenMultitouchSupport source was searched, inspected, copied,
 translated, or reproduced. The ABI evidence comes from the project
@@ -47,8 +47,14 @@ checks, guarded synthetic tests, and local runtime experiments.
   profile is immutable and explicitly `experimental_unvalidated`; every value
   is tied to the preserved Phase 2 capture and must be challenged by repeated
   live trials before acceptance.
+- Phase 5 can assess future repeated known-mass trials with a linear-first fit,
+  training-only model choice, independent held-out checks, and bounded candidate
+  estimates. The current Phase 4 profile and all existing artifacts fail its
+  evidence gate. No candidate model exists for this Mac yet.
 
-All candidate values are raw sensor coordinates, not grams.
+Current sensor publications are arbitrary raw coordinates, not grams. Future
+Phase 5 reports may contain gram-valued *mathematical candidates* when supplied
+known masses pass the software checks; those are not validated public weights.
 
 ## Architecture
 
@@ -83,7 +89,16 @@ PressureStabilizer (pure Python, private-ABI-free)
                     v
 phase4_probe / phase4_replay (experimental diagnostics)
 
-Phase 5 calibration and future hydration policy: intentionally not implemented
+Future physical known-mass artifacts + caller-claimed reviewed Phase 4 profile
+                    |
+                    v
+Phase 5 provenance consistency gate -> training-only linear/piecewise choice
+  -> untouched held-out mass and repeat checks -> bounded candidate model
+                    |
+                    v
+phase5_assessment (offline report only; never public bottle weight)
+
+Physical calibration acceptance and Phase 6 hydration policy: not implemented
 ```
 
 The native callback copies selected values before returning. Python sees only
@@ -243,6 +258,28 @@ publication is not Phase 4 acceptance: repeated baseline, steady-hold,
 transition, jostle, movement, contact-loss, and cross-session trials still need
 to establish or reject the exploratory thresholds.
 
+## Phase 5 candidate assessment
+
+The offline Phase 5 code is deliberately separate from the private macOS
+bridge. It takes repeated stable raw-domain publications at known masses,
+computes a per-mass median, fits a linear model first, and considers piecewise
+interpolation only when training-only residual and cross-validation evidence
+justify it. It freezes that choice before checking distinct held-out masses
+and every held-out repeat. The allowed mass range must be covered by held-out
+evidence; pressures or masses outside the measured range return unavailable,
+never extrapolated candidate grams.
+
+`trackpad-phase5-assess` requires a manifest of distinct future physical
+known-mass trial artifacts, a caller-supplied Phase 4 profile ID claimed to be
+reviewed and non-experimental, and a JSON criteria file containing **every**
+tolerance. It creates an
+exclusive, input-hash-bound candidate report and never exposes a public
+weight measurement. There is no valid manifest or acquisition protocol writer
+yet: today's fingertip-only Phase 4 report cannot become bottle-mass evidence
+by adding a grams label. The CLI checks recorded consistency, not whether that
+profile was actually reviewed. See [docs/PHASE5_STATUS.md](docs/PHASE5_STATUS.md)
+for the evidence schema, command, and physical blockers.
+
 ## Why the design is defensible
 
 - **Exact target, not folklore:** hardware, both OS build identities, framework
@@ -267,5 +304,6 @@ to establish or reject the exploratory thresholds.
 See [docs/ABI_VERIFICATION.md](docs/ABI_VERIFICATION.md),
 [docs/PHASE2_ABI_VERIFICATION.md](docs/PHASE2_ABI_VERIFICATION.md), and
 [docs/PHASE2_STATUS.md](docs/PHASE2_STATUS.md), and
-[docs/PHASE3_STATUS.md](docs/PHASE3_STATUS.md), and
-[docs/PHASE4_STATUS.md](docs/PHASE4_STATUS.md).
+[docs/PHASE3_STATUS.md](docs/PHASE3_STATUS.md),
+[docs/PHASE4_STATUS.md](docs/PHASE4_STATUS.md), and
+[docs/PHASE5_STATUS.md](docs/PHASE5_STATUS.md).

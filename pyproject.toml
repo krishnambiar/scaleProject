@@ -13,6 +13,7 @@ trackpad-phase1 = "trackpad_scale.phase1_probe:main"
 trackpad-phase2 = "trackpad_scale.phase2_probe:main"
 trackpad-phase4 = "trackpad_scale.phase4_probe:main"
 trackpad-phase4-replay = "trackpad_scale.phase4_replay:main"
+trackpad-phase5-assess = "trackpad_scale.phase5_assessment:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
