@@ -1,17 +1,60 @@
-# Clean-room MacBook trackpad scale diagnostics
+# Pebble: MacBook trackpad scale and diagnostics
 
 This repository has a verified Phase 1 transport, an exact-target Phase 2
 pressure diagnostic, a Phase 3 application boundary for immutable raw frames,
 and an experimental Phase 4 tare/filter/stability engine. Phase 5 now has a
 separate known-mass evidence gate and calibration assessment workflow, but no
 physical calibration has been performed: the project has no completed live
-Phase 4 trial or known-mass data. It does not publish validated bottle weight,
-public grams, or hydration behavior.
+Phase 4 trial or known-mass data. The GUI now offers explicitly estimated grams
+using TrackWeight's reported
+1:1 pressure interpretation. It does not publish validated bottle weight or
+hydration behavior.
 
-No TrackWeight or OpenMultitouchSupport source was searched, inspected, copied,
-translated, or reproduced. The ABI evidence comes from the project
-specification, local inspection of Apple's framework on this Mac, compiler
-checks, guarded synthetic tests, and local runtime experiments.
+## Scale GUI
+
+Double-click **Open Pebble.command** in Finder, or run `make gui`.
+
+1. Press **Start** and rest one fingertip lightly on the trackpad.
+2. If using dry paper under your object, lay it down first, leaving your
+   fingertip on uncovered trackpad. Press **Zero** or **Space** before adding
+   the object.
+3. Place the object on the trackpad while maintaining light, consistent finger
+   contact. Read the live estimate in grams.
+
+Contact is required throughout weighing: lifting the finger stops sensing.
+The last estimate remains on screen with a historical label. Adding or removing
+object contacts keeps the live reading and Zero while the original reference
+contact remains. Zero resets when that reference leaves or is replaced, on a
+stream discontinuity, or on Stop. A new touch begins updating immediately.
+The display combines pressure from current in-range contacts, including ones
+macOS classifies as hovering; pressure can shift into those records as an object
+is added. Departing contacts do not contribute retained pressure.
+
+The display sums the existing decoded pressure field across current contacts,
+with a ten-sample moving average (available from the first sample) and an
+immediate, optional zero offset.
+There is no timed setup or stability gate in normal use. These are **estimates**:
+the direct gram interpretation comes from TrackWeight's reported research.
+Combining contacts is our own experimental choice, supported by pressure
+redistribution in this Mac's saved capture. Neither the gram interpretation nor
+the combined reading has been checked against known masses on this Mac. Negative zeroed values
+remain visible when the load or finger pressure falls below the zero point.
+
+The GUI contains only the reading, guidance, and Start/Stop and Zero controls.
+Display Zero is independent of the experimental Phase 4 tare. Stored display
+readings are history, never calibrated or stable evidence. Use the diagnostic
+commands below for the separate baseline and calibration workflows.
+
+Use `make gui-demo` to try synthetic input, labeled Demo in the readout.
+The server runs locally on `127.0.0.1` with no frontend dependencies. Keep the
+launcher open, and use Stop or quit the launcher to end capture.
+
+The original transport and diagnostics were developed without inspecting
+TrackWeight or OpenMultitouchSupport. With the user's authorization, those
+repositories were subsequently read to inform the display and weighing flow.
+The current C/Python architecture remains independently implemented; no upstream
+source or dependency was imported. Pinned research sources, findings, and
+implementation decisions are in [docs/TRACKWEIGHT_RESEARCH.md](docs/TRACKWEIGHT_RESEARCH.md).
 
 ## Current status
 
@@ -52,7 +95,8 @@ checks, guarded synthetic tests, and local runtime experiments.
   estimates. The current Phase 4 profile and all existing artifacts fail its
   evidence gate. No candidate model exists for this Mac yet.
 
-Current sensor publications are arbitrary raw coordinates, not grams. Future
+The sensor and Phase 4 publications retain raw coordinates without physical-unit
+claims. Only the GUI display layer applies the documented 1:1 gram estimate. Future
 Phase 5 reports may contain gram-valued *mathematical candidates* when supplied
 known masses pass the software checks; those are not validated public weights.
 
@@ -81,6 +125,8 @@ NativePhase2Capture -> TouchDiagnosticSensor
                     v
 Phase 3 integrity gate -> RawFrameSensor -> immutable RawFrame
                     |
+                    +---- LiveReadout -> immediate zero + short smoothing
+                    |                     -> GUI estimated grams (unvalidated)
                     v
 PressureStabilizer (pure Python, private-ABI-free)
   explicit frozen tare -> transient gate -> median -> moving average

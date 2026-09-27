@@ -1,5 +1,9 @@
 # Phase 1 ABI verification record
 
+Historical verification record: the source-isolation statements below describe
+the original ABI investigation. The later authorized reference review and GUI
+changes are documented in [TRACKWEIGHT_RESEARCH.md](TRACKWEIGHT_RESEARCH.md).
+
 ## Clean-room evidence boundary
 
 This record was produced from the attached behavioral specification plus local inspection of Apple's framework on the target Mac. No TrackWeight or OpenMultitouchSupport source code was searched, inspected, copied, translated, or reproduced.

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "trackpad-scale-clean-room"
 version = "0.1.0"
-description = "Clean-room MacBook trackpad ABI and pressure diagnostics"
+description = "MacBook trackpad scale estimates and verified pressure diagnostics"
 requires-python = ">=3.9"
 
 [project.scripts]
@@ -14,6 +14,7 @@ trackpad-phase2 = "trackpad_scale.phase2_probe:main"
 trackpad-phase4 = "trackpad_scale.phase4_probe:main"
 trackpad-phase4-replay = "trackpad_scale.phase4_replay:main"
 trackpad-phase5-assess = "trackpad_scale.phase5_assessment:main"
+trackpad-gui = "trackpad_scale.gui:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -22,4 +23,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-trackpad_scale = ["abi_profiles/*.json", "phase4_profiles/*.json"]
+trackpad_scale = ["abi_profiles/*.json", "phase4_profiles/*.json", "gui_assets/*"]

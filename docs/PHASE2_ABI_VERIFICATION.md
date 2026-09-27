@@ -1,5 +1,9 @@
 # Phase 2 ABI verification record
 
+Historical verification record: the source-isolation statements below describe
+the original ABI investigation. The later authorized reference review and GUI
+changes are documented in [TRACKWEIGHT_RESEARCH.md](TRACKWEIGHT_RESEARCH.md).
+
 ## Evidence boundary
 
 This record is based on the project specification and independent inspection of

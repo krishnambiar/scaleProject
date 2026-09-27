@@ -18,9 +18,15 @@ GATE_STRESS_BINARY := $(BUILD_DIR)/phase1_callback_gate_stress
 PHASE2_TEST_SOURCE := native/tests/phase2_decode_test.c
 PHASE2_TEST_BINARY := $(BUILD_DIR)/phase2_decode_test
 
-.PHONY: all clean test stress probe phase2-probe phase4-probe phase4-replay
+.PHONY: all clean test stress probe phase2-probe phase4-probe phase4-replay gui gui-demo
 
 all: $(LIBRARY)
+
+gui: $(LIBRARY)
+	PYTHONPATH=src python3 -m trackpad_scale.gui
+
+gui-demo:
+	PYTHONPATH=src python3 -m trackpad_scale.gui --demo
 
 $(LIBRARY): $(NATIVE_SOURCES) $(HEADER) $(PHASE2_HEADER) $(PHASE2_INTERNAL_HEADER)
 	@mkdir -p $(BUILD_DIR)

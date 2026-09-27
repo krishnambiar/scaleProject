@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scale</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/view.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1><img class="brand-logo" src="/scale_icon.png" alt="Scale" width="56" height="56"></h1>
+    <section class="scale" aria-label="Scale reading">
+      <span id="demo" hidden>Demo</span>
+      <span id="reading-status">Ready</span>
+      <output id="reading" aria-label="Estimated weight in grams">—</output>
+      <span id="unit" class="unit">g · estimate</span>
+    </section>
+    <div class="guidance">
+      <svg class="info-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <circle cx="24" cy="24" r="22" fill="#d3e7fe" stroke="currentColor" stroke-width="3.5"/>
+        <circle cx="24" cy="14" r="2.75" fill="currentColor"/>
+        <path d="M21 22h3v12m-4 0h8" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <p id="instruction" role="status">Press Start, then rest one finger lightly on the trackpad.</p>
+    </div>
+    <div class="controls">
+      <button id="start" class="primary" disabled>Start</button>
+      <button id="zero" disabled>Zero <span aria-hidden="true">· Space</span></button>
+    </div>
+    <p class="hint estimate-note">Keep finger pressure light and consistent. Gram estimates have not been checked with known weights on this Mac.</p>
+    <p id="error" role="alert" hidden></p>
+  </main>
+</body>
+</html>
